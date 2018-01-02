@@ -31,6 +31,7 @@ def make_list(folders, flags = None, ceils = None, mode = 'train', store_path = 
     if ceils is None: ceils = [-1] * len(folders) # ceil constraint not imposed
     if flags is None: flags = list(range(len(folders))) # flags = [0, 1, ..., n-1]
     assert len(folders) == len(flags) == len(ceils)
+    assert mode in ['train', 'val', 'test']
     for folder in folders: assert os.path.isdir(folder)
 
     print('Making %s list' % mode)
@@ -67,6 +68,7 @@ parser.add_argument('--outf', type=str, default='/output', help='path for checkp
 parser.add_argument('--pretrained', type=str, default = '/', help='path for pre-trained weights *.npy')
 parser.add_argument('--checkStep', type=int, default=20, help='how many epochs to save checkpoints')
 opt = parser.parse_args()
+print(opt)
 
 train_file = make_list((opt.train0, opt.train1), mode='train', store_path=opt.outf)
 val_file = make_list((opt.val0, opt.val1), mode='val', store_path=opt.outf)
