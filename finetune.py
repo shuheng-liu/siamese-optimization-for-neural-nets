@@ -12,7 +12,7 @@ Author: Frederik Kratzert
 contact: f.kratzert(at)gmail.com
 """
 
-import os
+import os, argparse
 
 import numpy as np
 import tensorflow as tf
@@ -26,26 +26,68 @@ from tensorflow.contrib.data import Iterator
 Configuration Part.
 """
 
-# Path to the textfiles for the trainings and validation set
-train_file = '/path/to/train.txt'
-val_file = '/path/to/val.txt'
+def make_list(folders, flags = None, ceils = None, mode = 'train', store_path = '/output'):
+    suffices = ('jpg', 'JPG', 'jpeg', 'JPEG', 'png', 'PNG')
+    if ceils is None: ceils = [-1] * len(folders) # ceil constraint not imposed
+    if flags is None: flags = list(range(len(folders))) # flags = [0, 1, ..., n-1]
+    assert len(folders) == len(flags) == len(ceils)
+    for folder in folders: assert os.path.isdir(folder)
+
+    print('Making %s list' % mode)
+    if not os.path.isdir(store_path): os.mkdir(store_path)
+    out_list = os.path.join(store_path, mode + '.txt')
+    with open(out_list, 'w') as fo:
+        for folder, flag, ceil in zip(folders, flags, ceils):
+            count = 0
+            for pic_name in os.listdir(folder):
+                if pic_name.split('.')[-1] not in suffices:
+                    print('Ignoring non-image file %s in folder %s' % (pic_name, folder))
+                    print('Legal prefices are {}'.format(suffices))
+                    continue
+                count += 1
+                fo.write("{} {}\n".format(os.path.join(folder, pic_name), flag))
+                # if ceil is imposed (ceil > 0) and count exceeds ceil, break and write next flag
+                if 0 < ceil <= count: break
+    print('%s list made' % mode)
+    return out_list
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--train0', required=True, help='path to negative training dataset')
+parser.add_argument('--train1', required=True, help='path to positive training dataset')
+parser.add_argument('--val0', required=True, help='path to negative validation dataset')
+parser.add_argument('--val1', required=True, help='path to positive validation dataset')
+parser.add_argument('--lr', type=float, default=0.001, help='learning rate, default = 0.001')
+parser.add_argument('--nepochs', type=int, default=20, help='number of epochs, default = 20')
+parser.add_argument('--batchSize', type=int, default=128, help='default = 128')
+parser.add_argument('--dropout', type=int, default=0.5, help='dropout rate for alexnet, default = 0.5')
+parser.add_argument('--nclasses', type=int, default=2, help='number of classes, default = 2')
+parser.add_argument('--trainLayers', type=str, default='fc8 fc7 fc6', help='default = fc6 ~ fc8')
+parser.add_argument('--displayStep', type=int, default=20, help='How often to write tf.summary')
+parser.add_argument('--outf', type=str, default='/output', help='path for checkpoints & tf.summary')
+parser.add_argument('--pretrained', type=str, default = '/', help='path for pre-trained weights *.npy')
+parser.add_argument('--checkStep', type=int, default=20, help='how many epochs to save checkpoints')
+opt = parser.parse_args()
+
+train_file = make_list((opt.train0, opt.train1), mode='train', store_path=opt.outf)
+val_file = make_list((opt.val0, opt.val1), mode='val', store_path=opt.outf)
 
 # Learning params
-learning_rate = 0.01
-num_epochs = 10
-batch_size = 128
+learning_rate = opt.lr
+num_epochs = opt.nepochs
+batch_size = opt.batchSize
 
 # Network params
-dropout_rate = 0.5
-num_classes = 2
-train_layers = ['fc8', 'fc7', 'fc6']
+dropout_rate = opt.dropout
+num_classes = opt.nclasses
+train_layers = opt.trainLayers.split()
 
 # How often we want to write the tf.summary data to disk
-display_step = 20
+display_step = opt.displayStep
+check_step = opt.checkStep
 
 # Path for tf.summary.FileWriter and to store model checkpoints
-filewriter_path = "/tmp/finetune_alexnet/tensorboard"
-checkpoint_path = "/tmp/finetune_alexnet/checkpoints"
+filewriter_path = os.path.join(opt.outf, 'tensorboard')
+checkpoint_path = os.path.join(opt.outf, 'checkpoints')
 
 """
 Main Part of the finetuning Script.
@@ -72,7 +114,7 @@ with tf.device('/cpu:0'):
     iterator = Iterator.from_structure(tr_data.data.output_types,
                                        tr_data.data.output_shapes)
     next_batch = iterator.get_next()
-
+print('data loaded and preprocessed on the cpu')
 # Ops for initializing the two different iterators
 training_init_op = iterator.make_initializer(tr_data.data)
 validation_init_op = iterator.make_initializer(val_data.data)
@@ -136,7 +178,7 @@ writer = tf.summary.FileWriter(filewriter_path)
 saver = tf.train.Saver()
 
 # Get the number of training/validation steps per epoch
-train_batches_per_epoch = int(np.floor(tr_data.data_size/batch_size))
+train_batches_per_epoch = int(np.floor(tr_data.data_size / batch_size))
 val_batches_per_epoch = int(np.floor(val_data.data_size / batch_size))
 
 # Start Tensorflow session
@@ -200,9 +242,10 @@ with tf.Session() as sess:
         print("{} Saving checkpoint of model...".format(datetime.now()))
 
         # save checkpoint of the model
-        checkpoint_name = os.path.join(checkpoint_path,
-                                       'model_epoch'+str(epoch+1)+'.ckpt')
-        save_path = saver.save(sess, checkpoint_name)
+        if (epoch + 1) % check_step ==0:
+            checkpoint_name = os.path.join(checkpoint_path,
+                                           'model_epoch'+str(epoch+1)+'.ckpt')
+            save_path = saver.save(sess, checkpoint_name)
 
-        print("{} Model checkpoint saved at {}".format(datetime.now(),
+            print("{} Model checkpoint saved at {}".format(datetime.now(),
                                                        checkpoint_name))
