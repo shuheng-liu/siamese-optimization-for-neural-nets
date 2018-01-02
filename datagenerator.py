@@ -50,10 +50,8 @@ class ImageDataGenerator(object):
 
         # retrieve the data from the text file
         self._read_txt_file()
-
         # number of samples in the dataset
         self.data_size = len(self.labels)
-
         # initial shuffling of the file and label lists (together!)
         if shuffle:
             self._shuffle_lists()
@@ -94,8 +92,8 @@ class ImageDataGenerator(object):
             lines = f.readlines()
             for line in lines:
                 items = line.split(' ')
-                self.img_paths.append(items[0])
-                self.labels.append(int(items[1]))
+                self.img_paths.append(' '.join(items[:-1])) # in case the filename contains spaces
+                self.labels.append(int(items[-1]))
 
     def _shuffle_lists(self):
         """Conjoined shuffling of the list of paths and labels."""
