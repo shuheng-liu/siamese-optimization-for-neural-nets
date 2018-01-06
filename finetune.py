@@ -37,6 +37,7 @@ def make_list(folders, flags = None, ceils = None, mode = 'train', store_path = 
     print('Making %s list' % mode)
     if not os.path.isdir(store_path): os.mkdir(store_path)
     out_list = os.path.join(store_path, mode + '.txt')
+    list_length = 0
     with open(out_list, 'w') as fo:
         for folder, flag, ceil in zip(folders, flags, ceils):
             count = 0
@@ -46,11 +47,12 @@ def make_list(folders, flags = None, ceils = None, mode = 'train', store_path = 
                     print('Legal prefices are {}'.format(suffices))
                     continue
                 count += 1
+                list_length += 1
                 fo.write("{} {}\n".format(os.path.join(folder, pic_name), flag))
                 # if ceil is imposed (ceil > 0) and count exceeds ceil, break and write next flag
                 if 0 < ceil <= count: break
     print('%s list made' % mode)
-    return out_list
+    return out_list, list_length
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--train0', required=True, help='path to negative training dataset')
@@ -66,12 +68,12 @@ parser.add_argument('--trainLayers', type=str, default='fc8 fc7 fc6', help='defa
 parser.add_argument('--displayStep', type=int, default=20, help='How often to write tf.summary')
 parser.add_argument('--outf', type=str, default='/output', help='path for checkpoints & tf.summary')
 parser.add_argument('--pretrained', type=str, default = '/', help='path for pre-trained weights *.npy')
-parser.add_argument('--checkStep', type=int, default=20, help='how many epochs to save checkpoints')
+parser.add_argument('--checkStep', type=int, default=30, help='how many epochs to save checkpoints')
 opt = parser.parse_args()
 print(opt)
 
-train_file = make_list((opt.train0, opt.train1), mode='train', store_path=opt.outf)
-val_file = make_list((opt.val0, opt.val1), mode='val', store_path=opt.outf)
+train_file, train_length = make_list((opt.train0, opt.train1), mode='train', store_path=opt.outf)
+val_file, val_length = make_list((opt.val0, opt.val1), mode='val', store_path=opt.outf)
 
 # Learning params
 learning_rate = opt.lr
@@ -90,6 +92,14 @@ check_step = opt.checkStep
 # Path for tf.summary.FileWriter and to store model checkpoints
 filewriter_path = os.path.join(opt.outf, 'tensorboard')
 checkpoint_path = os.path.join(opt.outf, 'checkpoints')
+
+print('%d samples in training set' % train_length)
+print('%d samples in validation set' % val_length)
+print('Train - val ratio == %.1f\%: %.1f\%' % (100 * train_length / (train_length + val_length),
+                                              100 * val_length / (train_length + val_length)) )
+print('Of all %d val samples, %d is utilized, percentage = %.1f\%' % (val_length,
+                                            val_length // batch_size * batch_size,
+                                            val_length // batch_size * batch_size / val_length * 100) )
 
 """
 Main Part of the finetuning Script.
@@ -159,7 +169,7 @@ for var in var_list:
     tf.summary.histogram(var.name, var)
 
 # Add the loss to summary
-tf.summary.scalar('cross_entropy', loss)
+xent_summ = tf.summary.scalar('cross_entropy', loss)
 
 
 # Evaluation op: Accuracy of the model
@@ -168,20 +178,22 @@ with tf.name_scope("accuracy"):
     accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
 
 # Add the accuracy to the summary
-tf.summary.scalar('accuracy', accuracy)
+acc_summ = tf.summary.scalar('accuracy', accuracy)
 
 # Merge all summaries together
+performance = tf.summary.merge([xent_summ, acc_summ])
 merged_summary = tf.summary.merge_all()
 
 # Initialize the FileWriter
-writer = tf.summary.FileWriter(filewriter_path)
+train_writer = tf.summary.FileWriter(os.path.join(filewriter_path, 'train'))
+val_writer = tf.summary.FileWriter(os.path.join(filewriter_path, 'val'))
 
 # Initialize an saver for store model checkpoints
 saver = tf.train.Saver()
 
 # Get the number of training/validation steps per epoch
-train_batches_per_epoch = math.ceil(tr_data.data_size / batch_size)
-val_batches_per_epoch = math.ceil(val_data.data_size / batch_size)
+train_batches_per_epoch = math.floor(tr_data.data_size / batch_size)
+val_batches_per_epoch = math.floor(val_data.data_size / batch_size)
 
 # Start Tensorflow session
 with tf.Session() as sess:
@@ -190,7 +202,7 @@ with tf.Session() as sess:
     sess.run(tf.global_variables_initializer())
 
     # Add the model graph to TensorBoard
-    writer.add_graph(sess.graph)
+    train_writer.add_graph(sess.graph)
 
     # Load the pretrained weights into the non-trainable layer
     model.load_initial_weights(sess)
@@ -223,28 +235,28 @@ with tf.Session() as sess:
                                                         y: label_batch,
                                                         keep_prob: 1.})
 
-                writer.add_summary(s, epoch*train_batches_per_epoch + step)
+                train_writer.add_summary(s, epoch*train_batches_per_epoch + step)
 
         # Validate the model on the entire validation set
         print("{} Start validation".format(datetime.now()))
         sess.run(validation_init_op)
         test_acc = 0.
         test_count = 0
-        for _ in range(val_batches_per_epoch):
+        for step in range(val_batches_per_epoch):
 
             img_batch, label_batch = sess.run(next_batch)
-            acc = sess.run(accuracy, feed_dict={x: img_batch,
-                                                y: label_batch,
-                                                keep_prob: 1.})
+            perf, acc = sess.run([performance, accuracy], feed_dict={x: img_batch,
+                                                                     y: label_batch,
+                                                                     keep_prob: 1.})
             test_acc += acc * int(label_batch.shape[0])
             test_count += int(label_batch.shape[0])
-        print('%d validation samples encountered' % test_count)
+            val_writer.add_summary(perf, epoch * val_batches_per_epoch + step)
         test_acc /= test_count
         print("{} Validation Accuracy = {:.4f}".format(datetime.now(),
                                                        test_acc))
 
         # save checkpoint of the model
-        if (epoch + 1) % check_step ==0:
+        if (epoch + 1) % check_step == 0:
             print("{} Saving checkpoint of model...".format(datetime.now()))
             checkpoint_name = os.path.join(checkpoint_path,
                                            'model_epoch'+str(epoch+1)+'.ckpt')
@@ -252,3 +264,6 @@ with tf.Session() as sess:
 
             print("{} Model checkpoint saved at {}".format(datetime.now(),
                                                        checkpoint_name))
+
+train_writer.close()
+val_writer.close()
