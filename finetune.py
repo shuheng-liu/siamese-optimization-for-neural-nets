@@ -21,7 +21,7 @@ from alexnet import AlexNet
 from datagenerator import ImageDataGenerator
 from datetime import datetime
 from tensorflow.contrib.data import Iterator
-
+import math
 """
 Configuration Part.
 """
@@ -32,7 +32,7 @@ def make_list(folders, flags = None, ceils = None, mode = 'train', store_path = 
     if flags is None: flags = list(range(len(folders))) # flags = [0, 1, ..., n-1]
     assert len(folders) == len(flags) == len(ceils)
     assert mode in ['train', 'val', 'test']
-    for folder in folders: assert os.path.isdir(folder)
+    for folder in folders: assert os.path.isdir(folder), "%s is not a directory" % folder
 
     print('Making %s list' % mode)
     if not os.path.isdir(store_path): os.mkdir(store_path)
@@ -180,8 +180,8 @@ writer = tf.summary.FileWriter(filewriter_path)
 saver = tf.train.Saver()
 
 # Get the number of training/validation steps per epoch
-train_batches_per_epoch = int(np.floor(tr_data.data_size / batch_size))
-val_batches_per_epoch = int(np.floor(val_data.data_size / batch_size))
+train_batches_per_epoch = math.ceil(np.floor(tr_data.data_size / batch_size))
+val_batches_per_epoch = math.ceil(np.floor(val_data.data_size / batch_size))
 
 # Start Tensorflow session
 with tf.Session() as sess:
@@ -218,7 +218,7 @@ with tf.Session() as sess:
                                           keep_prob: dropout_rate})
 
             # Generate summary with the current batch of data and write to file
-            if step % display_step == 0:
+            if (epoch*train_batches_per_epoch + step) % display_step == 0:
                 s = sess.run(merged_summary, feed_dict={x: img_batch,
                                                         y: label_batch,
                                                         keep_prob: 1.})
@@ -236,15 +236,16 @@ with tf.Session() as sess:
             acc = sess.run(accuracy, feed_dict={x: img_batch,
                                                 y: label_batch,
                                                 keep_prob: 1.})
-            test_acc += acc
-            test_count += 1
+            test_acc += acc * int(label_batch.shape[0])
+            test_count += int(label_batch.shape[0])
+        print('%d validation samples encountered' % test_count)
         test_acc /= test_count
         print("{} Validation Accuracy = {:.4f}".format(datetime.now(),
                                                        test_acc))
-        print("{} Saving checkpoint of model...".format(datetime.now()))
 
         # save checkpoint of the model
         if (epoch + 1) % check_step ==0:
+            print("{} Saving checkpoint of model...".format(datetime.now()))
             checkpoint_name = os.path.join(checkpoint_path,
                                            'model_epoch'+str(epoch+1)+'.ckpt')
             save_path = saver.save(sess, checkpoint_name)
