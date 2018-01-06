@@ -24,10 +24,10 @@ class ImageDataGenerator(object):
                  buffer_size=1000):
         """Create a new ImageDataGenerator.
 
-        Recieves a path string to a text file, which consists of many lines,
-        where each line has first a path string to an image and seperated by
+        Receives a path string to a text file, which consists of many lines,
+        where each line has first a path string to an image and separated by
         a space an integer, referring to the class number. Using this data,
-        this class will create TensrFlow datasets, that can be used to train
+        this class will create TensorFlow datasets, that can be used to train
         e.g. a convolutional neural network.
 
         Args:
@@ -36,7 +36,7 @@ class ImageDataGenerator(object):
                 different parsing functions will be used.
             batch_size: Number of images per batch.
             num_classes: Number of classes in the dataset.
-            shuffle: Wether or not to shuffle the data in the dataset and the
+            shuffle: Whether or not to shuffle the data in the dataset and the
                 initial file list.
             buffer_size: Number of images used as buffer for TensorFlows
                 shuffling of the dataset.
