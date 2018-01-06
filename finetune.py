@@ -180,8 +180,8 @@ writer = tf.summary.FileWriter(filewriter_path)
 saver = tf.train.Saver()
 
 # Get the number of training/validation steps per epoch
-train_batches_per_epoch = math.ceil(np.floor(tr_data.data_size / batch_size))
-val_batches_per_epoch = math.ceil(np.floor(val_data.data_size / batch_size))
+train_batches_per_epoch = math.ceil(tr_data.data_size / batch_size)
+val_batches_per_epoch = math.ceil(val_data.data_size / batch_size)
 
 # Start Tensorflow session
 with tf.Session() as sess:
