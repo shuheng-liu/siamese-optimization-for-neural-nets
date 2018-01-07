@@ -21,6 +21,7 @@ from alexnet import AlexNet
 from datagenerator import ImageDataGenerator
 from datetime import datetime
 from tensorflow.contrib.data import Iterator
+from tensorflow.contrib.tensorboard.plugins import projector
 import math
 """
 Configuration Part.
@@ -68,7 +69,8 @@ parser.add_argument('--trainLayers', type=str, default='fc8 fc7 fc6', help='defa
 parser.add_argument('--displayStep', type=int, default=20, help='How often to write tf.summary')
 parser.add_argument('--outf', type=str, default='/output', help='path for checkpoints & tf.summary')
 parser.add_argument('--pretrained', type=str, default = '/', help='path for pre-trained weights *.npy')
-parser.add_argument('--checkStep', type=int, default=30, help='how many epochs to save checkpoints')
+parser.add_argument('--noCheck', action = 'store_true', help='don\'t save model checkpoints')
+parser.add_argument('--checkStd', type=str, default='xent', help='Standard for checkpointing, acc or xent')
 opt = parser.parse_args()
 print(opt)
 
@@ -87,7 +89,7 @@ train_layers = opt.trainLayers.split()
 
 # How often we want to write the tf.summary data to disk
 display_step = opt.displayStep
-check_step = opt.checkStep
+assert opt.checkStd in ['acc', 'xent'], 'Illegal check standard, %s' % opt.checkStd
 
 # Path for tf.summary.FileWriter and to store model checkpoints
 filewriter_path = os.path.join(opt.outf, 'tensorboard')
@@ -95,11 +97,11 @@ checkpoint_path = os.path.join(opt.outf, 'checkpoints')
 
 print('%d samples in training set' % train_length)
 print('%d samples in validation set' % val_length)
-print('Train - val ratio == %.1f\%: %.1f\%' % (100 * train_length / (train_length + val_length),
-                                              100 * val_length / (train_length + val_length)) )
-print('Of all %d val samples, %d is utilized, percentage = %.1f\%' % (val_length,
+print('Train - val ratio == %.1f%s : %.1f%s' % (100 * train_length / (train_length + val_length), '%',
+                                              100 * val_length / (train_length + val_length), '%'))
+print('Of all %d val samples, %d is utilized, percentage = %.1f%s' % (val_length,
                                             val_length // batch_size * batch_size,
-                                            val_length // batch_size * batch_size / val_length * 100) )
+                                            val_length // batch_size * batch_size / val_length * 100, '%') )
 
 """
 Main Part of the finetuning Script.
@@ -208,9 +210,10 @@ with tf.Session() as sess:
     model.load_initial_weights(sess)
 
     print("{} Start training...".format(datetime.now()))
-    print("{} Open Tensorboard at --logdir {}".format(datetime.now(),
-                                                      filewriter_path))
+    print("{} Open Tensorboard at --logdir {}".format(datetime.now(), filewriter_path))
 
+
+    lowest_xent, highest_acc = 99999., 0. # init before checkpointing
     # Loop over number of epochs
     for epoch in range(num_epochs):
 
@@ -241,29 +244,48 @@ with tf.Session() as sess:
         print("{} Start validation".format(datetime.now()))
         sess.run(validation_init_op)
         test_acc = 0.
+        test_xent = 0.
         test_count = 0
         for step in range(val_batches_per_epoch):
 
             img_batch, label_batch = sess.run(next_batch)
-            perf, acc = sess.run([performance, accuracy], feed_dict={x: img_batch,
+            perf, acc, xent = sess.run([performance, accuracy, loss], feed_dict={x: img_batch,
                                                                      y: label_batch,
                                                                      keep_prob: 1.})
             test_acc += acc * int(label_batch.shape[0])
+            test_xent += xent * int(label_batch.shape[0])
             test_count += int(label_batch.shape[0])
             val_writer.add_summary(perf, epoch * val_batches_per_epoch + step)
         test_acc /= test_count
-        print("{} Validation Accuracy = {:.4f}".format(datetime.now(),
-                                                       test_acc))
+        test_xent /= test_count
+        print("{} Validation Accuracy = {}".format(datetime.now(), test_acc))
+        print("{} Validation Cross-Ent = {}".format(datetime.now(), test_xent))
 
+        if opt.noCheck: continue # skip checkpointing
         # save checkpoint of the model
-        if (epoch + 1) % check_step == 0:
-            print("{} Saving checkpoint of model...".format(datetime.now()))
-            checkpoint_name = os.path.join(checkpoint_path,
-                                           'model_epoch'+str(epoch+1)+'.ckpt')
-            save_path = saver.save(sess, checkpoint_name)
+        if opt.checkStd == 'xent': # if the checkpointing standard is lowest cross-entropy, do the following
+            if test_xent < lowest_xent: # if test_xent is beneath current lowest
+                lowest_xent = test_xent # update lowest cross-entropy
+                print('{} Lowest cross-entropy renewed to {}'.format(datetime.now(), lowest_xent))
+                print("{} Saving checkpoint of model...".format(datetime.now()))
+                checkpoint_name = os.path.join(checkpoint_path, 'model_lowest_xent.ckpt')
+                save_path = saver.save(sess, checkpoint_name)
+                print("{} Model checkpoint saved at {}".format(datetime.now(), checkpoint_name))
+            else: # if test_xent is no better than the current best
+                print('{} Lowest cross-entropy remained {}'.format(datetime.now(), lowest_xent))
+        else: # else, if the checkpointing standard is highest accuracy, do the following
+            if test_acc > highest_acc: # if test_acc exceeds current highest
+                highest_acc = test_acc # update highest accuracy
+                print('{} Highest accuracy renewed to {}'.format(datetime.now(), highest_acc))
+                print("{} Saving checkpoint of model...".format(datetime.now()))
+                checkpoint_name = os.path.join(checkpoint_path, 'model_highest_acc.ckpt')
+                save_path = saver.save(sess, checkpoint_name)
+                print("{} Model checkpoint saved at {}".format(datetime.now(), checkpoint_name))
+            else: # if test_acc is no better than the current best
+                print('{} Highest accuracy remained {}'.format(datetime.now(), highest_acc))
 
-            print("{} Model checkpoint saved at {}".format(datetime.now(),
-                                                       checkpoint_name))
 
 train_writer.close()
 val_writer.close()
+# print('The program has already finished. There is a dead loop at the end, ctrl+c to quit.')
+# while(True): pass
