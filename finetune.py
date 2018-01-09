@@ -27,64 +27,95 @@ import math
 Configuration Part.
 """
 
+# generate a txt file containing image paths and labels
 def make_list(folders, flags = None, ceils = None, mode = 'train', store_path = '/output'):
     suffices = ('jpg', 'JPG', 'jpeg', 'JPEG', 'png', 'PNG')
     if ceils is None: ceils = [-1] * len(folders) # ceil constraint not imposed
     if flags is None: flags = list(range(len(folders))) # flags = [0, 1, ..., n-1]
     assert len(folders) == len(flags) == len(ceils)
     assert mode in ['train', 'val', 'test']
-    for folder in folders: assert os.path.isdir(folder), "%s is not a directory" % folder
+    folders_flags_ceils = [tup for tup in zip(folders, flags, ceils)
+                           if isinstance(tup[0], str) and os.path.isdir(tup[0])]
+    assert folders_flags_ceils
 
     print('Making %s list' % mode)
+    for tup in folders_flags_ceils:
+        print('Folder {}: flag = {}, ceil = {}'.format(*tup))
     if not os.path.isdir(store_path): os.mkdir(store_path)
     out_list = os.path.join(store_path, mode + '.txt')
     list_length = 0
     with open(out_list, 'w') as fo:
-        for folder, flag, ceil in zip(folders, flags, ceils):
+        for (folder, flag, ceil) in folders_flags_ceils:
             count = 0
             for pic_name in os.listdir(folder):
                 if pic_name.split('.')[-1] not in suffices:
-                    print('Ignoring non-image file %s in folder %s' % (pic_name, folder))
-                    print('Legal prefices are {}'.format(suffices))
+                    print('Ignoring non-image file {} in folder {}.'.format(pic_name, folder),
+                          'Legal suffices are', suffices)
                     continue
                 count += 1
                 list_length += 1
                 fo.write("{} {}\n".format(os.path.join(folder, pic_name), flag))
                 # if ceil is imposed (ceil > 0) and count exceeds ceil, break and write next flag
                 if 0 < ceil <= count: break
-    print('%s list made' % mode)
+    print('%s list made\n' % mode)
     return out_list, list_length
+
+# find a suitable batchSize
+def auto_adapt_batch(train_size, val_size, max_size = 128):
+    '''
+    returns a suitable batch size according to train and val dataset size,
+    say max_size = 128, and val_size is smaller than train_size,
+        if val_size < 128, the batch_size to be returned is val_size
+        if 128 < val_size <= 256, the batch size is 1/2 of val_size, at most 1 validation sample cannot be used
+        if 256 < val_size <= 384, the batch size is 1/3 of val_size, at most 2 validation samples cannot be used
+        ...
+    :param train_size: the number of training samples in the training set
+    :param val_size: the number of validation samples in the validation set
+    :param max_size: the maximum batch_size that is allowed to be returned
+    :return: a suitable batch_size for the input
+    '''
+    print('Auto adapting batch size...')
+    numerator = min(train_size, val_size)
+    if numerator < max_size: return numerator
+    denominator = 0
+    while(True):
+        denominator += 1
+        batch_size = numerator // denominator
+        if batch_size <= max_size: return batch_size
+    return 32 # never too be actually executed
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--train0', required=True, help='path to negative training dataset')
 parser.add_argument('--train1', required=True, help='path to positive training dataset')
+parser.add_argument('--train2', default=None, help='path to other disease training dataset')
 parser.add_argument('--val0', required=True, help='path to negative validation dataset')
 parser.add_argument('--val1', required=True, help='path to positive validation dataset')
+parser.add_argument('--val2', default=None, help='path to other disease validation dataset')
 parser.add_argument('--lr', type=float, default=0.001, help='learning rate, default = 0.001')
 parser.add_argument('--nepochs', type=int, default=20, help='number of epochs, default = 20')
-parser.add_argument('--batchSize', type=int, default=128, help='default = 128')
+parser.add_argument('--batchSize', type=int, default=0, help='default = automatic-adapting')
 parser.add_argument('--dropout', type=int, default=0.5, help='dropout rate for alexnet, default = 0.5')
-parser.add_argument('--nclasses', type=int, default=2, help='number of classes, default = 2')
+parser.add_argument('--nclasses', type=int, default=0, help='number of classes, default = 2')
 parser.add_argument('--trainLayers', type=str, default='fc8 fc7 fc6', help='default = fc6 ~ fc8')
 parser.add_argument('--displayStep', type=int, default=20, help='How often to write tf.summary')
-parser.add_argument('--outf', type=str, default='/output', help='path for checkpoints & tf.summary')
+parser.add_argument('--outf', type=str, default='/output', help='path for checkpoints & tf.summary & samplelist')
 parser.add_argument('--pretrained', type=str, default = '/', help='path for pre-trained weights *.npy')
 parser.add_argument('--noCheck', action = 'store_true', help='don\'t save model checkpoints')
 parser.add_argument('--checkStd', type=str, default='xent', help='Standard for checkpointing, acc or xent')
 opt = parser.parse_args()
 print(opt)
 
-train_file, train_length = make_list((opt.train0, opt.train1), mode='train', store_path=opt.outf)
-val_file, val_length = make_list((opt.val0, opt.val1), mode='val', store_path=opt.outf)
-
 # Learning params
 learning_rate = opt.lr
 num_epochs = opt.nepochs
-batch_size = opt.batchSize
 
 # Network params
 dropout_rate = opt.dropout
-num_classes = opt.nclasses
+if opt.nclasses == 0:
+    if opt.val2 and opt.train2: num_classes = 3
+    else: num_classes = 2
+else: num_classes = opt.nclasses
+print('There are %d labels for classification' % num_classes)
 train_layers = opt.trainLayers.split()
 
 # How often we want to write the tf.summary data to disk
@@ -92,16 +123,36 @@ display_step = opt.displayStep
 assert opt.checkStd in ['acc', 'xent'], 'Illegal check standard, %s' % opt.checkStd
 
 # Path for tf.summary.FileWriter and to store model checkpoints
-filewriter_path = os.path.join(opt.outf, 'tensorboard')
+# filewriter_path = os.path.join(opt.outf, 'tensorboard')
+filewriter_path = opt.outf
 checkpoint_path = os.path.join(opt.outf, 'checkpoints')
+sample_path = os.path.join(opt.outf, 'samplelist')
+
+# make train & val & test list, and do stats
+train_file, train_length = make_list((opt.train0, opt.train1, opt.train2), mode='train', store_path=sample_path)
+val_file, val_length = make_list((opt.val0, opt.val1, opt.val2), mode='val', store_path=sample_path)
+test_file, test_length = make_list((opt.train0, opt.val0, opt.train1, opt.val1, opt.train2, opt.val2),
+                                   flags=(0, 0, 1, 1, 2, 2), mode='test', store_path=sample_path)
+
+if opt.batchSize:
+    batch_size = opt.batchSize
+else:
+    batch_size = auto_adapt_batch(train_length, val_length)
 
 print('%d samples in training set' % train_length)
 print('%d samples in validation set' % val_length)
-print('Train - val ratio == %.1f%s : %.1f%s' % (100 * train_length / (train_length + val_length), '%',
+print('Train-Val ratio == %.1f%s : %.1f%s' % (100 * train_length / (train_length + val_length), '%',
                                               100 * val_length / (train_length + val_length), '%'))
+print('Batch Size =', batch_size)
 print('Of all %d val samples, %d is utilized, percentage = %.1f%s' % (val_length,
                                             val_length // batch_size * batch_size,
                                             val_length // batch_size * batch_size / val_length * 100, '%') )
+print('Of all %d train samples, %d is utilized, percentage = %.1f%s' % (train_length,
+                                            train_length // batch_size * batch_size,
+                                            train_length // batch_size * batch_size / train_length * 100, '%') )
+print('Of all %d test samples, %d is utilized, percentage = %.1f%s' % (test_length,
+                                            test_length // batch_size * batch_size,
+                                            test_length // batch_size * batch_size / test_length * 100, '%') )
 
 """
 Main Part of the finetuning Script.
@@ -113,25 +164,31 @@ if not os.path.isdir(checkpoint_path):
 
 # Place data loading and preprocessing on the cpu
 with tf.device('/cpu:0'):
-    tr_data = ImageDataGenerator(train_file,
-                                 mode='training',
-                                 batch_size=batch_size,
-                                 num_classes=num_classes,
-                                 shuffle=True)
+    train_data = ImageDataGenerator(train_file,
+                                    mode='training',
+                                    batch_size=batch_size,
+                                    num_classes=num_classes,
+                                    shuffle=True)
     val_data = ImageDataGenerator(val_file,
                                   mode='inference',
                                   batch_size=batch_size,
                                   num_classes=num_classes,
                                   shuffle=False)
+    test_data = ImageDataGenerator(test_file,
+                                   mode='inference',
+                                   batch_size=batch_size,
+                                   num_classes=num_classes,
+                                   shuffle=False)
 
     # create an reinitializable iterator given the dataset structure
-    iterator = Iterator.from_structure(tr_data.data.output_types,
-                                       tr_data.data.output_shapes)
+    iterator = Iterator.from_structure(train_data.data.output_types,
+                                       train_data.data.output_shapes)
     next_batch = iterator.get_next()
 print('data loaded and preprocessed on the cpu')
 # Ops for initializing the two different iterators
-training_init_op = iterator.make_initializer(tr_data.data)
+training_init_op = iterator.make_initializer(train_data.data)
 validation_init_op = iterator.make_initializer(val_data.data)
+testing_init_op = iterator.make_initializer(test_data.data)
 
 # TF placeholder for graph input and output
 x = tf.placeholder(tf.float32, [batch_size, 227, 227, 3])
@@ -194,8 +251,9 @@ val_writer = tf.summary.FileWriter(os.path.join(filewriter_path, 'val'))
 saver = tf.train.Saver()
 
 # Get the number of training/validation steps per epoch
-train_batches_per_epoch = math.floor(tr_data.data_size / batch_size)
+train_batches_per_epoch = math.floor(train_data.data_size / batch_size)
 val_batches_per_epoch = math.floor(val_data.data_size / batch_size)
+test_batches_per_epoch = math.floor(test_data.data_size / batch_size)
 
 # Start Tensorflow session
 with tf.Session() as sess:
@@ -261,31 +319,74 @@ with tf.Session() as sess:
         print("{} Validation Accuracy = {}".format(datetime.now(), test_acc))
         print("{} Validation Cross-Ent = {}".format(datetime.now(), test_xent))
 
-        if opt.noCheck: continue # skip checkpointing
         # save checkpoint of the model
         if opt.checkStd == 'xent': # if the checkpointing standard is lowest cross-entropy, do the following
             if test_xent < lowest_xent: # if test_xent is beneath current lowest
                 lowest_xent = test_xent # update lowest cross-entropy
                 print('{} Lowest cross-entropy renewed to {}'.format(datetime.now(), lowest_xent))
-                print("{} Saving checkpoint of model...".format(datetime.now()))
-                checkpoint_name = os.path.join(checkpoint_path, 'model_lowest_xent.ckpt')
-                save_path = saver.save(sess, checkpoint_name)
-                print("{} Model checkpoint saved at {}".format(datetime.now(), checkpoint_name))
+                if not opt.noCheck: # skip checkpointing if --noCheck is set
+                    print("{} Saving checkpoint of model...".format(datetime.now()))
+                    checkpoint_name = os.path.join(checkpoint_path, 'model_lowest_xent.ckpt')
+                    save_path = saver.save(sess, checkpoint_name)
+                    print("{} Model checkpoint saved at {}".format(datetime.now(), checkpoint_name))
             else: # if test_xent is no better than the current best
                 print('{} Lowest cross-entropy remained {}'.format(datetime.now(), lowest_xent))
         else: # else, if the checkpointing standard is highest accuracy, do the following
             if test_acc > highest_acc: # if test_acc exceeds current highest
                 highest_acc = test_acc # update highest accuracy
                 print('{} Highest accuracy renewed to {}'.format(datetime.now(), highest_acc))
-                print("{} Saving checkpoint of model...".format(datetime.now()))
-                checkpoint_name = os.path.join(checkpoint_path, 'model_highest_acc.ckpt')
-                save_path = saver.save(sess, checkpoint_name)
-                print("{} Model checkpoint saved at {}".format(datetime.now(), checkpoint_name))
+                if not opt.noCheck:
+                    print("{} Saving checkpoint of model...".format(datetime.now()))
+                    checkpoint_name = os.path.join(checkpoint_path, 'model_highest_acc.ckpt')
+                    save_path = saver.save(sess, checkpoint_name)
+                    print("{} Model checkpoint saved at {}".format(datetime.now(), checkpoint_name))
             else: # if test_acc is no better than the current best
                 print('{} Highest accuracy remained {}'.format(datetime.now(), highest_acc))
 
+# after training, summarize the embeddings
+with tf.Session() as sess:
+    sess.run(tf.global_variables_initializer())
+    sess.run(testing_init_op)
+    meta_path = os.path.join(filewriter_path, 'metadata.tsv')
+    with open(meta_path, 'w') as f:
+        f.write('Index\tLabel\n')
+        for step in range(test_batches_per_epoch):
+            img_batch, label_batch = sess.run(next_batch)
+            for i, lab in enumerate(list(label_batch)):
+                f.write('%d\t%d\n' %(step*batch_size + i, np.argmax(lab)))
+            fc7_batch, fc8_batch= sess.run([model.fc7, model.fc8], feed_dict={x: img_batch,
+                                                                              y: label_batch,
+                                                                              keep_prob: 1.})
+            # concatenate this batch with previous ones
+            if step == 0:
+                fc7, fc8 = fc7_batch, fc8_batch
+            else:
+                fc7, fc8 = np.concatenate((fc7, fc7_batch)), np.concatenate((fc8, fc8_batch))
 
-train_writer.close()
-val_writer.close()
-# print('The program has already finished. There is a dead loop at the end, ctrl+c to quit.')
+    # checkpoint both fc7 and fc8
+    fc7_var, fc8_var= tf.Variable(fc7, name='fc7_var'), tf.Variable(fc8, name = 'fc8_var')
+    embedding_saver = tf.train.Saver(var_list=[fc7_var, fc8_var])
+    sess.run([fc7_var.initializer, fc8_var.initializer])
+    config = projector.ProjectorConfig()
+    embedding_fc7, embedding_fc8 = config.embeddings.add(), config.embeddings.add()
+    embedding_fc7.tensor_name, embedding_fc8.tensor_name = fc7_var.name, fc8_var.name
+    embedding_fc7.metadata_path, embedding_fc8.metadata_path = meta_path, meta_path
+
+    # checkpoint only fc8
+    # fc8_var = tf.Variable(fc8, name='fc8_var')
+    # embedding_saver = tf.train.Saver(var_list = [fc8_var])
+    # sess.run(fc8_var.initializer)
+    # config = projector.ProjectorConfig()
+    # embedding_fc8 = config.embeddings.add()
+    # embedding_fc8.tensor_name = fc8_var.name
+    # embedding_fc8.metadata_path = meta_path
+
+    projector.visualize_embeddings(tf.summary.FileWriter(filewriter_path), config)
+
+    print('{} Saving embeddings'.format(datetime.now()))
+    embedding_saver.save(sess, os.path.join(filewriter_path, 'embeddings.ckpt'))
+    print('{} Embeddings Saved'.format(datetime.now()))
+
+
+# print('This is a hanging script, ^C to quit')
 # while(True): pass
