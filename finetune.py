@@ -354,7 +354,7 @@ with tf.Session() as sess:
             img_batch, label_batch = sess.run(next_batch)
             for i, lab in enumerate(list(label_batch)):
                 f.write('%d\t%d\n' %(step*batch_size + i, np.argmax(lab)))
-            fc7_batch, fc8_batch= sess.run([model.fc7, model.fc8], feed_dict={x: img_batch,
+            fc7batch, fc8_batch= sess.run([model.fc7, model.fc8], feed_dict={x: img_batch,
                                                                               y: label_batch,
                                                                               keep_prob: 1.})
             # concatenate this batch with previous ones
