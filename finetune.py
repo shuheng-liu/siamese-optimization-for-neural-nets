@@ -191,24 +191,29 @@ validation_init_op = iterator.make_initializer(val_data.data)
 testing_init_op = iterator.make_initializer(test_data.data)
 
 # TF placeholder for graph input and output
-x = tf.placeholder(tf.float32, [batch_size, 227, 227, 3])
-y = tf.placeholder(tf.float32, [batch_size, num_classes])
+x = tf.placeholder(tf.float32, [None, 227, 227, 3])
+# y = tf.placeholder(tf.float32, [None, num_classes])
 keep_prob = tf.placeholder(tf.float32)
 
 # Initialize model
-model = AlexNet(x, keep_prob, num_classes, train_layers)
+model = AlexNet(x, keep_prob, num_classes, train_layers, weights_path=opt.pretrained)
+y = model.y
 
 # Link variable to model output
 score = model.fc8
+projections = model.fc7 # i.e. embeddings, not to be mistaken with `embeddings` belows
 
 # List of trainable variables of the layers we want to train
+print('listing variable names:')
+for v in tf.trainable_variables(): print('| ', v.name)
+print('variable names listed.')
 var_list = [v for v in tf.trainable_variables() if v.name.split('/')[0] in train_layers]
 
 # Op for calculating the loss
-with tf.name_scope("cross_ent"):
-    loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=score,
-                                                                  labels=y))
-
+# with tf.name_scope("cross_ent"):
+#     loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=score,
+#                                                                   labels=y))
+loss = model.xent_loss
 # Train op
 with tf.name_scope("train"):
     # Get gradients of all trainable variables
@@ -354,7 +359,7 @@ with tf.Session() as sess:
             img_batch, label_batch = sess.run(next_batch)
             for i, lab in enumerate(list(label_batch)):
                 f.write('%d\t%d\n' %(step*batch_size + i, np.argmax(lab)))
-            fc7batch, fc8_batch= sess.run([model.fc7, model.fc8], feed_dict={x: img_batch,
+            fc7_batch, fc8_batch= sess.run([model.fc7, model.fc8], feed_dict={x: img_batch,
                                                                               y: label_batch,
                                                                               keep_prob: 1.})
             # concatenate this batch with previous ones

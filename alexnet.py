@@ -29,7 +29,7 @@ class AlexNet(object):
     """Implementation of the AlexNet."""
 
     def __init__(self, x, keep_prob, num_classes, skip_layer,
-                 weights_path='DEFAULT'):
+                 weights_path='/pretrained/bvlc_alexnet.npy'):
         """Create the graph of the AlexNet model.
 
         Args:
@@ -42,23 +42,36 @@ class AlexNet(object):
                 isn't in the same folder as this code
         """
         # Parse input arguments into class variables
-        self.X = x
+        self.isSiamese = isinstance(x, tuple)
+        if self.isSiamese: self.X1, self.X2 = x[0], x[1]
+        else: self.X1 = x
         self.NUM_CLASSES = num_classes
         self.KEEP_PROB = keep_prob
         self.SKIP_LAYER = skip_layer
-
-        if weights_path == 'DEFAULT':
-            self.WEIGHTS_PATH = '/pretrained/bvlc_alexnet.npy'
-        else:
-            self.WEIGHTS_PATH = weights_path
+        self.WEIGHTS_PATH = weights_path
 
         # Call the create function to build the computational graph of AlexNet
-        self.create()
+        with tf.name_scope('Siamese') as scope:
+            self.fc7, self.fc8 = self.create(self.X1)
+            if self.isSiamese:
+                self.latent1, self.embed1 = self.fc7, self.fc8
+                scope.reuse_variables()
+                self.latent2, self.embed2 = self.create(self.X2)
 
-    def create(self):
-        """Create the network graph."""
+        # define loss
+        if self.isSiamese:
+            self.y_cmp = tf.placeholder(tf.float32, [None])
+            self.quadratic_siamese_loss = quadratic_siamese_loss(self)
+        else:
+            self.y = tf.placeholder(tf.float32, [None, None])
+            self.xent_loss = xent_loss(self)
+
+
+
+    def create(self, X):
+        """Create the network graph. returns tensors of fc7 and fc8"""
         # 1st Layer: Conv (w ReLu) -> Lrn -> Pool
-        conv1 = conv(self.X, 11, 11, 96, 4, 4, padding='VALID', name='conv1')
+        conv1 = conv(X, 11, 11, 96, 4, 4, padding='VALID', name='conv1')
         norm1 = lrn(conv1, 2, 1e-05, 0.75, name='norm1')
         pool1 = max_pool(norm1, 3, 3, 2, 2, padding='VALID', name='pool1')
         
@@ -84,11 +97,11 @@ class AlexNet(object):
 
         # 7th Layer: FC (w ReLu) -> Dropout
         fc7 = fc(dropout6, 4096, 4096, name='fc7')
-        self.fc7 = fc7
         dropout7 = dropout(fc7, self.KEEP_PROB)
 
         # 8th Layer: FC and return unscaled activations
-        self.fc8 = fc(dropout7, 4096, self.NUM_CLASSES, relu=False, name='fc8')
+        fc8 = fc(dropout7, 4096, self.NUM_CLASSES, relu=False, name='fc8')
+        return fc7, fc8
 
     def load_initial_weights(self, session):
         """Load weights from file into network.
@@ -206,3 +219,31 @@ def lrn(x, radius, alpha, beta, name, bias=1.0):
 def dropout(x, keep_prob):
     """Create a dropout layer."""
     return tf.nn.dropout(x, keep_prob)
+
+
+def quadratic_siamese_loss(net, margin = 5.0):
+    '''
+    This function computes quadratic loss given the pairs (input1, class1) and (input2, class2)
+    :param net: the used alexnet instance
+    :param margin: the threshold for loss when c1 != c2
+    :return: the quadratic loss introduced by the distance between the embeddings of input1 and input2. If they have
+    the same class label, the loss is defined by ||embed1 - embed2||; if they have different class labels,
+    the loss is defined by ReLU(margin - ||embed1 - embed2||)
+    '''
+    assert net.isSiamese, 'the model is not a Siamese Network, check again'
+    eucd2 = tf.reduce_sum((net.embed1-net.embed2)**2, name='eucd2')
+    eucd = tf.sqrt(eucd2+1e-6, name='eucd')
+    margin = tf.constant(margin, name='margin')
+    # if input1 and input2 has the same class label
+    loss1 = tf.multiply(net.y_cmp, eucd2, name = 'quad_loss1')
+    # if input1 and input2 has different class labels
+    loss2 = tf.multiply(1.-net.y_cmp, tf.nn.relu(margin - eucd)**2, name='quad_loss2')
+    loss = loss1 + loss2
+    return loss
+
+
+def xent_loss(net):
+    '''returns a cross-entropy loss'''
+    with tf.name_scope("cross_ent"):
+        return tf.reduce_mean(
+            tf.nn.softmax_cross_entropy_with_logits(logits=net.fc8, labels=net.y), name = 'xent_loss')
