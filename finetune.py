@@ -32,7 +32,7 @@ def make_list(folders, flags = None, ceils = None, mode = 'train', store_path = 
     suffices = ('jpg', 'JPG', 'jpeg', 'JPEG', 'png', 'PNG')
     if ceils is None: ceils = [-1] * len(folders) # ceil constraint not imposed
     if flags is None: flags = list(range(len(folders))) # flags = [0, 1, ..., n-1]
-    assert len(folders) == len(flags) == len(ceils)
+    assert len(folders) == len(flags) == len(ceils), (len(folders),len(flags),len(ceils))
     assert mode in ['train', 'val', 'test']
     folders_flags_ceils = [tup for tup in zip(folders, flags, ceils)
                            if isinstance(tup[0], str) and os.path.isdir(tup[0])]
@@ -60,6 +60,7 @@ def make_list(folders, flags = None, ceils = None, mode = 'train', store_path = 
     print('%s list made\n' % mode)
     return out_list, list_length
 
+
 # find a suitable batchSize
 def auto_adapt_batch(train_size, val_size, max_size = 128):
     '''
@@ -84,6 +85,7 @@ def auto_adapt_batch(train_size, val_size, max_size = 128):
         if batch_size <= max_size: return batch_size
     return 32 # never too be actually executed
 
+
 parser = argparse.ArgumentParser()
 parser.add_argument('--train0', required=True, help='path to negative training dataset')
 parser.add_argument('--train1', required=True, help='path to positive training dataset')
@@ -99,9 +101,11 @@ parser.add_argument('--nclasses', type=int, default=0, help='number of classes, 
 parser.add_argument('--trainLayers', type=str, default='fc8 fc7 fc6', help='default = fc6 ~ fc8')
 parser.add_argument('--displayStep', type=int, default=20, help='How often to write tf.summary')
 parser.add_argument('--outf', type=str, default='/output', help='path for checkpoints & tf.summary & samplelist')
-parser.add_argument('--pretrained', type=str, default = '/', help='path for pre-trained weights *.npy')
-parser.add_argument('--noCheck', action = 'store_true', help='don\'t save model checkpoints')
+parser.add_argument('--pretrained', type=str, default='/', help='path for pre-trained weights *.npy')
+parser.add_argument('--noCheck', action='store_true', help='don\'t save model checkpoints')
+parser.add_argument('--siamese', action='store_true', help='use siamese training instead of supervised learning')
 parser.add_argument('--checkStd', type=str, default='xent', help='Standard for checkpointing, acc or xent')
+parser.add_argument('--margin', type=float, default=5.0, help='distance margin for calculating siamese loss')
 opt = parser.parse_args()
 print(opt)
 
@@ -134,10 +138,7 @@ val_file, val_length = make_list((opt.val0, opt.val1, opt.val2), mode='val', sto
 test_file, test_length = make_list((opt.train0, opt.val0, opt.train1, opt.val1, opt.train2, opt.val2),
                                    flags=(0, 0, 1, 1, 2, 2), mode='test', store_path=sample_path)
 
-if opt.batchSize:
-    batch_size = opt.batchSize
-else:
-    batch_size = auto_adapt_batch(train_length, val_length)
+batch_size = opt.batchSize if opt.batchSize else auto_adapt_batch(train_length, val_length)
 
 print('%d samples in training set' % train_length)
 print('%d samples in validation set' % val_length)
@@ -191,49 +192,69 @@ validation_init_op = iterator.make_initializer(val_data.data)
 testing_init_op = iterator.make_initializer(test_data.data)
 
 # TF placeholder for graph input and output
-x = tf.placeholder(tf.float32, [None, 227, 227, 3])
 # y = tf.placeholder(tf.float32, [None, num_classes])
 keep_prob = tf.placeholder(tf.float32)
 
 # Initialize model
-model = AlexNet(x, keep_prob, num_classes, train_layers, weights_path=opt.pretrained)
+x1 = tf.placeholder(tf.float32, [None, 227, 227, 3])
+if opt.siamese:
+    x2 = tf.placeholder(tf.float32, [None, 227, 227, 3])
+    model = AlexNet((x1, x2), keep_prob, num_classes, train_layers, weights_path=opt.pretrained, margin=opt.margin)
+else:
+    model = AlexNet(x1, keep_prob, num_classes, train_layers, weights_path=opt.pretrained)
+
 y = model.y
+if model.isSiamese: y_cmp = model.y_cmp
 
 # Link variable to model output
 score = model.fc8
 projections = model.fc7 # i.e. embeddings, not to be mistaken with `embeddings` belows
 
 # List of trainable variables of the layers we want to train
-print('listing variable names:')
+print('listing trainable variable names:')
 for v in tf.trainable_variables(): print('| ', v.name)
-print('variable names listed.')
-var_list = [v for v in tf.trainable_variables() if v.name.split('/')[0] in train_layers]
+print('trainable variable names listed.')
+var_list = [v for v in tf.trainable_variables() if v.name.split('/')[-2] in train_layers]
 
-# Op for calculating the loss
+# Op for calculating the xent_loss
 # with tf.name_scope("cross_ent"):
-#     loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=score,
+#     xent_loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=score,
 #                                                                   labels=y))
-loss = model.xent_loss
+xent_loss = model.xent_loss
+if opt.siamese: siamese_loss = model.quadratic_siamese_loss
+
 # Train op
-with tf.name_scope("train"):
+with tf.name_scope("superviesd-train"):
     # Get gradients of all trainable variables
-    gradients = tf.gradients(loss, var_list)
+    gradients = tf.gradients(xent_loss, var_list)
     gradients = list(zip(gradients, var_list))
 
     # Create optimizer and apply gradient descent to the trainable variables
     optimizer = tf.train.GradientDescentOptimizer(learning_rate)
-    train_op = optimizer.apply_gradients(grads_and_vars=gradients)
+    supervised_train_op = optimizer.apply_gradients(grads_and_vars=gradients)
 
 # Add gradients to summary
 for gradient, var in gradients:
-    tf.summary.histogram(var.name + '/gradient', gradient)
+    tf.summary.histogram(var.name + '/gradient-supervised', gradient)
+
+# duplicate of the above process, defining siamese_train_op
+if opt.siamese:
+    with tf.name_scope("siamese-train"):
+        gradients = tf.gradients(siamese_loss, var_list)
+        gradients = list(zip(gradients, var_list))
+        optimizer = tf.train.GradientDescentOptimizer(learning_rate)
+        siamese_train_op = optimizer.apply_gradients(grads_and_vars=gradients)
+
+    for gradient, var in gradients:
+        tf.summary.histogram(var.name + '/gradient-siamese', gradient)
 
 # Add the variables we train to the summary
 for var in var_list:
     tf.summary.histogram(var.name, var)
 
-# Add the loss to summary
-xent_summ = tf.summary.scalar('cross_entropy', loss)
+# Add the xent_loss to summary
+xent_summ = tf.summary.scalar('cross_entropy', xent_loss)
+if opt.siamese: siam_summ = tf.summary.scalar('siamese-loss', siamese_loss)
 
 
 # Evaluation op: Accuracy of the model
@@ -245,7 +266,7 @@ with tf.name_scope("accuracy"):
 acc_summ = tf.summary.scalar('accuracy', accuracy)
 
 # Merge all summaries together
-performance = tf.summary.merge([xent_summ, acc_summ])
+performance = tf.summary.merge([xent_summ, siam_summ]) if opt.siamese else tf.summary.merge([xent_summ, acc_summ])
 merged_summary = tf.summary.merge_all()
 
 # Initialize the FileWriter
@@ -275,8 +296,7 @@ with tf.Session() as sess:
     print("{} Start training...".format(datetime.now()))
     print("{} Open Tensorboard at --logdir {}".format(datetime.now(), filewriter_path))
 
-
-    lowest_xent, highest_acc = 99999., 0. # init before checkpointing
+    lowest_loss, lowest_xent, highest_acc = 1e15, 1e15, 0.  # init before checkpointing
     # Loop over number of epochs
     for epoch in range(num_epochs):
 
@@ -284,48 +304,99 @@ with tf.Session() as sess:
 
         # Initialize iterator with the training dataset
         sess.run(training_init_op)
+        if not opt.siamese: # if using supervised training, do the following train and val process
+            for step in range(train_batches_per_epoch):
 
-        for step in range(train_batches_per_epoch):
+                # get next batch of data
+                img_batch, label_batch = sess.run(next_batch)
 
-            # get next batch of data
-            img_batch, label_batch = sess.run(next_batch)
+                # And run the training op
+                sess.run(supervised_train_op, feed_dict={x1: img_batch,
+                                                         y: label_batch,
+                                                         keep_prob: 1-dropout_rate})
 
-            # And run the training op
-            sess.run(train_op, feed_dict={x: img_batch,
-                                          y: label_batch,
-                                          keep_prob: dropout_rate})
+                # Generate summary with the current batch of data and write to file
+                if (epoch*train_batches_per_epoch + step) % display_step == 0:
+                    s = sess.run(merged_summary, feed_dict={x1: img_batch,
+                                                            y: label_batch,
+                                                            keep_prob: 1.})
 
-            # Generate summary with the current batch of data and write to file
-            if (epoch*train_batches_per_epoch + step) % display_step == 0:
-                s = sess.run(merged_summary, feed_dict={x: img_batch,
-                                                        y: label_batch,
-                                                        keep_prob: 1.})
+                    train_writer.add_summary(s, epoch*train_batches_per_epoch + step)
 
-                train_writer.add_summary(s, epoch*train_batches_per_epoch + step)
+            # Validate the model on the entire validation set
+            print("{} Start validation".format(datetime.now()))
+            sess.run(validation_init_op)
+            test_acc, test_xent, test_count = 0., 0., 0
+            for step in range(val_batches_per_epoch):
+                img_batch, label_batch = sess.run(next_batch)
+                perf, acc, xent = sess.run([performance, accuracy, xent_loss], feed_dict={x1: img_batch,
+                                                                                          y: label_batch,
+                                                                                          keep_prob: 1.})
+                test_acc += acc * int(label_batch.shape[0])
+                test_xent += xent * int(label_batch.shape[0])
+                test_count += int(label_batch.shape[0])
+                val_writer.add_summary(perf, epoch * val_batches_per_epoch + step)
 
-        # Validate the model on the entire validation set
-        print("{} Start validation".format(datetime.now()))
-        sess.run(validation_init_op)
-        test_acc = 0.
-        test_xent = 0.
-        test_count = 0
-        for step in range(val_batches_per_epoch):
+            test_acc /= test_count
+            test_xent /= test_count
+            print("{} Validation Accuracy = {}".format(datetime.now(), test_acc))
+            print("{} Validation Cross-Ent = {}".format(datetime.now(), test_xent))
+        else: # i.e. opt.siamese == True
+            for step in range(train_batches_per_epoch // 2):
+                img_batch1, label_batch1 = sess.run(next_batch)
+                img_batch2, label_batch2 = sess.run(next_batch)
+                # print('label_batches\n', label_batch1, '\n', label_batch2)
+                label_cmp = np.min((label_batch1 == label_batch2).astype('float'), 1)
+                # print('label_cmp == \n {}'.format(label_cmp))
+                sess.run(siamese_train_op, feed_dict={x1: img_batch1,
+                                                      x2: img_batch2,
+                                                      y_cmp: label_cmp,
+                                                      y: label_batch1,
+                                                      keep_prob: 1-dropout_rate})
+                if (epoch*(train_batches_per_epoch//2) + step) % display_step ==0:
+                    s = sess.run(merged_summary, feed_dict={x1: img_batch1,
+                                                            x2: img_batch2,
+                                                            y_cmp: label_cmp,
+                                                            y: label_batch1,
+                                                            keep_prob:1.})
+                    train_writer.add_summary(s, epoch * (train_batches_per_epoch//2) + step)
 
-            img_batch, label_batch = sess.run(next_batch)
-            perf, acc, xent = sess.run([performance, accuracy, loss], feed_dict={x: img_batch,
-                                                                     y: label_batch,
-                                                                     keep_prob: 1.})
-            test_acc += acc * int(label_batch.shape[0])
-            test_xent += xent * int(label_batch.shape[0])
-            test_count += int(label_batch.shape[0])
-            val_writer.add_summary(perf, epoch * val_batches_per_epoch + step)
-        test_acc /= test_count
-        test_xent /= test_count
-        print("{} Validation Accuracy = {}".format(datetime.now(), test_acc))
-        print("{} Validation Cross-Ent = {}".format(datetime.now(), test_xent))
+            # Validate the model on the entire validation set
+            print("{} Start valiadation".format(datetime.now()))
+            sess.run(validation_init_op)
+            test_loss, test_xent, test_count = 0., 0., 0
+            for step in range(val_batches_per_epoch // 2):
+                img_batch1, label_batch1 = sess.run(next_batch)
+                img_batch2, label_batch2 = sess.run(next_batch)
+                label_cmp = np.min((label_batch1 == label_batch2).astype('float'), 1)
+                # print('label_batch1.shape', label_batch1.shape)
+                perf, siam, xent = sess.run([performance, siamese_loss, xent_loss], feed_dict={x1: img_batch1,
+                                                                                                x2: img_batch2,
+                                                                                                y_cmp: label_cmp,
+                                                                                                y: label_batch1,
+                                                                                                keep_prob: 1.})
+                test_loss += siam * int(label_batch1.shape[0])
+                test_xent += xent * int(label_batch1.shape[0])
+                test_count += int(label_batch1.shape[0])
+                val_writer.add_summary(perf, epoch * (val_batches_per_epoch//2) + step)
+            test_loss /= test_count
+            test_xent /= test_count
+            print("{} Validation Loss = {:10f}".format(datetime.now(), float(test_loss)))
+            print("{} Validation Xent = {:10f}".format(datetime.now(), float(test_xent)))
 
         # save checkpoint of the model
-        if opt.checkStd == 'xent': # if the checkpointing standard is lowest cross-entropy, do the following
+        if opt.siamese:
+            if test_loss < lowest_loss:
+                lowest_loss = test_loss
+                print('{} Lowest siamese-loss renewed to {}'.format(datetime.now(), lowest_loss))
+                if not opt.noCheck:
+                    print('{} Saving checkpoint of the model ...'.format(datetime.now()))
+                    checkpoint_name = os.path.join(checkpoint_path, 'model_lowest_siamloss.ckpt')
+                    save_path = saver.save(sess, checkpoint_name)
+                    print("{} Model checkpoint saved at {}".format(datetime.now(), checkpoint_name))
+            else: # if test_loss is no better than the current best
+                print('{} Lowest siamese-loss remained {}'.format(datetime.now(), lowest_loss))
+        elif opt.checkStd == 'xent': # if the checkpointing standard is lowest cross-entropy, do the following
             if test_xent < lowest_xent: # if test_xent is beneath current lowest
                 lowest_xent = test_xent # update lowest cross-entropy
                 print('{} Lowest cross-entropy renewed to {}'.format(datetime.now(), lowest_xent))
@@ -336,7 +407,7 @@ with tf.Session() as sess:
                     print("{} Model checkpoint saved at {}".format(datetime.now(), checkpoint_name))
             else: # if test_xent is no better than the current best
                 print('{} Lowest cross-entropy remained {}'.format(datetime.now(), lowest_xent))
-        else: # else, if the checkpointing standard is highest accuracy, do the following
+        elif opt.checkStd == 'acc': # else, if the checkpointing standard is highest accuracy, do the following
             if test_acc > highest_acc: # if test_acc exceeds current highest
                 highest_acc = test_acc # update highest accuracy
                 print('{} Highest accuracy renewed to {}'.format(datetime.now(), highest_acc))
@@ -347,6 +418,7 @@ with tf.Session() as sess:
                     print("{} Model checkpoint saved at {}".format(datetime.now(), checkpoint_name))
             else: # if test_acc is no better than the current best
                 print('{} Highest accuracy remained {}'.format(datetime.now(), highest_acc))
+        else: raise ValueError('Updating mechanism not considered for checkStd ' + opt.checkStd)
 
 # after training, summarize the embeddings
 with tf.Session() as sess:
@@ -359,7 +431,7 @@ with tf.Session() as sess:
             img_batch, label_batch = sess.run(next_batch)
             for i, lab in enumerate(list(label_batch)):
                 f.write('%d\t%d\n' %(step*batch_size + i, np.argmax(lab)))
-            fc7_batch, fc8_batch= sess.run([model.fc7, model.fc8], feed_dict={x: img_batch,
+            fc7_batch, fc8_batch= sess.run([model.fc7, model.fc8], feed_dict={x1: img_batch,
                                                                               y: label_batch,
                                                                               keep_prob: 1.})
             # concatenate this batch with previous ones
