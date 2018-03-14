@@ -96,7 +96,7 @@ parser.add_argument('--val2', default=None, help='path to other disease validati
 parser.add_argument('--lr1', type=float, default=1e-3, help='learning rate for supervised learning, default=1e-3')
 parser.add_argument('--lr2', type=float, default=5e-7, help='learning rate for siamese learning, default=5e-7')
 parser.add_argument('--nepochs1', type=int, default=20, help='number of supervised epochs, default = 20')
-parser.add_argument('--nepochs2', type=int, default=20, help='number of siamese epochs, default = 100')
+parser.add_argument('--nepochs2', type=int, default=100, help='number of siamese epochs, default = 100')
 parser.add_argument('--batchSize', type=int, default=0, help='default = automatic-adapting')
 parser.add_argument('--dropout', type=int, default=0.5, help='dropout rate for alexnet, default = 0.5')
 parser.add_argument('--nclasses', type=int, default=0, help='number of classes, default = 2')
