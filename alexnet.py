@@ -44,7 +44,7 @@ class AlexNet(object):
         # Parse input arguments into class variables
         self.isSiamese = isinstance(x, tuple)
         if self.isSiamese: self.X1, self.X2 = x[0], x[1]
-        else: self.X1 = x
+        else: self.X1, self.X2 = x, x # self.X2 is never used
         self.NUM_CLASSES = num_classes
         self.KEEP_PROB = keep_prob
         self.SKIP_LAYER = skip_layer
@@ -54,18 +54,24 @@ class AlexNet(object):
         # with tf.variable_scope('') as scope:
 
         self.fc7, self.fc8 = self.create(self.X1)
+        self.latent1, self.embed1 = self.fc7, self.fc8
         if self.isSiamese:
-            self.latent1, self.embed1 = self.fc7, self.fc8
             tf.get_variable_scope().reuse_variables()
             self.latent2, self.embed2 = self.create(self.X2)
+        else:
+            self.latent2, self.embed2 = self.fc7, self.fc8
 
         # define xent_loss
         self.y = tf.placeholder(tf.float32, [None, None])
         self.xent_loss = xent_loss(self)
         if self.isSiamese:
-            self.y_cmp = tf.placeholder(tf.float32, [None])
+            self.y_cmp = tf.placeholder(tf.float32, [None], name='y_cmp')
             self.quadratic_siamese_loss = quadratic_siamese_loss(self, margin=margin)
             self.linear_siamese_loss = linear_siamese_loss(self, margin=margin)
+        else:
+            self.y_cmp = tf.placeholder(tf.float32, [None], name='y_cmp')
+            self.quadratic_siamese_loss = self.xent_loss
+            self.linear_siamese_loss = self.xent_loss
 
 
     def create(self, X):
@@ -231,8 +237,8 @@ def quadratic_siamese_loss(net, margin = 5.0):
     the xent_loss is defined by ReLU(margin - ||embed1 - embed2||)
     '''
     assert net.isSiamese, 'the model is not a Siamese Network, check again'
-    eucd2 = tf.reduce_sum((net.embed1 - net.embed2) ** 2, name='eucd2')
-    # eucd2 = tf.reduce_sum((net.latent1 - net.latent2) ** 2, name='eucd2')
+    # eucd2 = tf.reduce_sum((net.embed1 - net.embed2) ** 2, name='eucd2')
+    eucd2 = tf.reduce_sum((net.latent1 - net.latent2) ** 2, name='eucd2')
     eucd = tf.sqrt(eucd2+1e-6, name='eucd')
     margin = tf.constant(margin, name='margin')
     # if input1 and input2 have the same class label

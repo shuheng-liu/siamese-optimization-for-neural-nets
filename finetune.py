@@ -93,7 +93,8 @@ parser.add_argument('--train2', default=None, help='path to other disease traini
 parser.add_argument('--val0', required=True, help='path to negative validation dataset')
 parser.add_argument('--val1', required=True, help='path to positive validation dataset')
 parser.add_argument('--val2', default=None, help='path to other disease validation dataset')
-parser.add_argument('--lr', type=float, default=0.001, help='learning rate, default = 0.001')
+parser.add_argument('--lr1', type=float, default=1e-3, help='learning rate for supervised learning, default=1e-3')
+parser.add_argument('--lr2', type=float, default=5e-7, help='learning rate for siamese learning, default=5e-7')
 parser.add_argument('--nepochs', type=int, default=20, help='number of epochs, default = 20')
 parser.add_argument('--batchSize', type=int, default=0, help='default = automatic-adapting')
 parser.add_argument('--dropout', type=int, default=0.5, help='dropout rate for alexnet, default = 0.5')
@@ -110,7 +111,8 @@ opt = parser.parse_args()
 print(opt)
 
 # Learning params
-learning_rate = opt.lr
+learning_rate_supervised = opt.lr1
+learning_rate_siamese = opt.lr2
 num_epochs = opt.nepochs
 
 # Network params
@@ -121,7 +123,7 @@ if opt.nclasses == 0:
 else: num_classes = opt.nclasses
 print('There are %d labels for classification' % num_classes)
 train_layers = opt.trainLayers.split()
-
+train_layers_siamese, train_layers_supervised = ['fc6', 'fc7'], ['fc8']
 # How often we want to write the tf.summary data to disk
 display_step = opt.displayStep
 assert opt.checkStd in ['acc', 'xent'], 'Illegal check standard, %s' % opt.checkStd
@@ -196,15 +198,14 @@ testing_init_op = iterator.make_initializer(test_data.data)
 keep_prob = tf.placeholder(tf.float32)
 
 # Initialize model
-x1 = tf.placeholder(tf.float32, [None, 227, 227, 3])
+x1 = tf.placeholder(tf.float32, [None, 227, 227, 3], name='x1')
+x2 = tf.placeholder(tf.float32, [None, 227, 227, 3], name='x2')
 if opt.siamese:
-    x2 = tf.placeholder(tf.float32, [None, 227, 227, 3])
     model = AlexNet((x1, x2), keep_prob, num_classes, train_layers, weights_path=opt.pretrained, margin=opt.margin)
 else:
     model = AlexNet(x1, keep_prob, num_classes, train_layers, weights_path=opt.pretrained)
 
-y = model.y
-if model.isSiamese: y_cmp = model.y_cmp
+y, y_cmp = model.y, model.y_cmp
 
 # Link variable to model output
 score = model.fc8
@@ -215,6 +216,8 @@ print('listing trainable variable names:')
 for v in tf.trainable_variables(): print('| ', v.name)
 print('trainable variable names listed.')
 var_list = [v for v in tf.trainable_variables() if v.name.split('/')[-2] in train_layers]
+var_list_supervised = [v for v in tf.trainable_variables() if v.name.split('/')[-2] in train_layers_supervised]
+var_list_siamese = [v for v in tf.trainable_variables() if v.name.split('/')[-2] in train_layers_siamese]
 
 # Op for calculating the xent_loss
 # with tf.name_scope("cross_ent"):
@@ -226,11 +229,11 @@ if opt.siamese: siamese_loss = model.quadratic_siamese_loss
 # Train op
 with tf.name_scope("superviesd-train"):
     # Get gradients of all trainable variables
-    gradients = tf.gradients(xent_loss, var_list)
-    gradients = list(zip(gradients, var_list))
+    gradients = tf.gradients(xent_loss, var_list_supervised)
+    gradients = list(zip(gradients, var_list_supervised))
 
     # Create optimizer and apply gradient descent to the trainable variables
-    optimizer = tf.train.GradientDescentOptimizer(learning_rate)
+    optimizer = tf.train.GradientDescentOptimizer(learning_rate_supervised)
     supervised_train_op = optimizer.apply_gradients(grads_and_vars=gradients)
 
 # Add gradients to summary
@@ -240,9 +243,9 @@ for gradient, var in gradients:
 # duplicate of the above process, defining siamese_train_op
 if opt.siamese:
     with tf.name_scope("siamese-train"):
-        gradients = tf.gradients(siamese_loss, var_list)
-        gradients = list(zip(gradients, var_list))
-        optimizer = tf.train.GradientDescentOptimizer(learning_rate)
+        gradients = tf.gradients(siamese_loss, var_list_siamese)
+        gradients = list(zip(gradients, var_list_siamese))
+        optimizer = tf.train.GradientDescentOptimizer(learning_rate_siamese)
         siamese_train_op = optimizer.apply_gradients(grads_and_vars=gradients)
 
     for gradient, var in gradients:
@@ -303,45 +306,9 @@ with tf.Session() as sess:
         print("{} Epoch number: {}".format(datetime.now(), epoch+1))
 
         # Initialize iterator with the training dataset
-        sess.run(training_init_op)
-        if not opt.siamese: # if using supervised training, do the following train and val process
-            for step in range(train_batches_per_epoch):
-
-                # get next batch of data
-                img_batch, label_batch = sess.run(next_batch)
-
-                # And run the training op
-                sess.run(supervised_train_op, feed_dict={x1: img_batch,
-                                                         y: label_batch,
-                                                         keep_prob: 1-dropout_rate})
-
-                # Generate summary with the current batch of data and write to file
-                if (epoch*train_batches_per_epoch + step) % display_step == 0:
-                    s = sess.run(merged_summary, feed_dict={x1: img_batch,
-                                                            y: label_batch,
-                                                            keep_prob: 1.})
-
-                    train_writer.add_summary(s, epoch*train_batches_per_epoch + step)
-
-            # Validate the model on the entire validation set
-            print("{} Start validation".format(datetime.now()))
-            sess.run(validation_init_op)
-            test_acc, test_xent, test_count = 0., 0., 0
-            for step in range(val_batches_per_epoch):
-                img_batch, label_batch = sess.run(next_batch)
-                perf, acc, xent = sess.run([performance, accuracy, xent_loss], feed_dict={x1: img_batch,
-                                                                                          y: label_batch,
-                                                                                          keep_prob: 1.})
-                test_acc += acc * int(label_batch.shape[0])
-                test_xent += xent * int(label_batch.shape[0])
-                test_count += int(label_batch.shape[0])
-                val_writer.add_summary(perf, epoch * val_batches_per_epoch + step)
-
-            test_acc /= test_count
-            test_xent /= test_count
-            print("{} Validation Accuracy = {}".format(datetime.now(), test_acc))
-            print("{} Validation Cross-Ent = {}".format(datetime.now(), test_xent))
-        else: # i.e. opt.siamese == True
+        if opt.siamese: # if using siamese training, do the following train and val process
+            print('{} Start Siamese Training'.format(datetime.now()))
+            sess.run(training_init_op)
             for step in range(train_batches_per_epoch // 2):
                 img_batch1, label_batch1 = sess.run(next_batch)
                 img_batch2, label_batch2 = sess.run(next_batch)
@@ -353,7 +320,7 @@ with tf.Session() as sess:
                                                       y_cmp: label_cmp,
                                                       y: label_batch1,
                                                       keep_prob: 1-dropout_rate})
-                if (epoch*(train_batches_per_epoch//2) + step) % display_step ==0:
+                if (epoch*(train_batches_per_epoch//2) + step) % display_step == 0:
                     s = sess.run(merged_summary, feed_dict={x1: img_batch1,
                                                             x2: img_batch2,
                                                             y_cmp: label_cmp,
@@ -362,7 +329,7 @@ with tf.Session() as sess:
                     train_writer.add_summary(s, epoch * (train_batches_per_epoch//2) + step)
 
             # Validate the model on the entire validation set
-            print("{} Start valiadation".format(datetime.now()))
+            print("{} Start Validation".format(datetime.now()))
             sess.run(validation_init_op)
             test_loss, test_xent, test_count = 0., 0., 0
             for step in range(val_batches_per_epoch // 2):
@@ -383,6 +350,52 @@ with tf.Session() as sess:
             test_xent /= test_count
             print("{} Validation Loss = {:10f}".format(datetime.now(), float(test_loss)))
             print("{} Validation Xent = {:10f}".format(datetime.now(), float(test_xent)))
+
+        # Regardless of whether using siamese training, do the following supervised train and val process
+        sess.run(training_init_op)
+        print('{} Start Supervised Training'.format(datetime.now()))
+        for step in range(train_batches_per_epoch):
+            # get next batch of data
+            img_batch, label_batch = sess.run(next_batch)
+            label_cmp = np.ones(label_batch.shape[0], dtype=float)
+                # min((label_batch == label_batch).astype('float'), 1)
+            # And run the training op
+            sess.run(supervised_train_op, feed_dict={x1: img_batch,
+                                                     x2: img_batch, # x2 is not actually used
+                                                     y: label_batch,
+                                                     y_cmp: label_cmp,
+                                                     keep_prob: 1-dropout_rate})
+
+            # Generate summary with the current batch of data and write to file
+            if (epoch*train_batches_per_epoch + step) % display_step == 0:
+                s = sess.run(merged_summary, feed_dict={x1: img_batch,
+                                                        x2: img_batch, # x2 is not actually used
+                                                        y: label_batch,
+                                                        y_cmp: label_cmp,
+                                                        keep_prob: 1.})
+
+                train_writer.add_summary(s, epoch*train_batches_per_epoch + step)
+        # Validate the model on the entire validation set
+        print("{} Start Validation".format(datetime.now()))
+        sess.run(validation_init_op)
+        test_acc, test_xent, test_count = 0., 0., 0
+        for step in range(val_batches_per_epoch):
+            img_batch, label_batch = sess.run(next_batch)
+            label_cmp = np.ones(label_batch.shape[0], dtype=float)
+            perf, acc, xent = sess.run([performance, accuracy, xent_loss], feed_dict={x1: img_batch,
+                                                                                      x2: img_batch, # x2 is not used
+                                                                                      y: label_batch,
+                                                                                      y_cmp: label_cmp,
+                                                                                      keep_prob: 1.})
+            test_acc += acc * int(label_batch.shape[0])
+            test_xent += xent * int(label_batch.shape[0])
+            test_count += int(label_batch.shape[0])
+            val_writer.add_summary(perf, epoch * val_batches_per_epoch + step)
+
+        test_acc /= test_count
+        test_xent /= test_count
+        print("{} Validation Accuracy = {}".format(datetime.now(), test_acc))
+        print("{} Validation Cross-Ent = {}".format(datetime.now(), test_xent))
 
         # save checkpoint of the model
         if opt.siamese:
