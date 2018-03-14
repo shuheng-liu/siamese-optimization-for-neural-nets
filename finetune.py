@@ -95,7 +95,8 @@ parser.add_argument('--val1', required=True, help='path to positive validation d
 parser.add_argument('--val2', default=None, help='path to other disease validation dataset')
 parser.add_argument('--lr1', type=float, default=1e-3, help='learning rate for supervised learning, default=1e-3')
 parser.add_argument('--lr2', type=float, default=5e-7, help='learning rate for siamese learning, default=5e-7')
-parser.add_argument('--nepochs', type=int, default=20, help='number of epochs, default = 20')
+parser.add_argument('--nepochs1', type=int, default=20, help='number of supervised epochs, default = 20')
+parser.add_argument('--nepochs2', type=int, default=20, help='number of siamese epochs, default = 100')
 parser.add_argument('--batchSize', type=int, default=0, help='default = automatic-adapting')
 parser.add_argument('--dropout', type=int, default=0.5, help='dropout rate for alexnet, default = 0.5')
 parser.add_argument('--nclasses', type=int, default=0, help='number of classes, default = 2')
@@ -113,7 +114,8 @@ print(opt)
 # Learning params
 learning_rate_supervised = opt.lr1
 learning_rate_siamese = opt.lr2
-num_epochs = opt.nepochs
+num_epochs_supervised = opt.nepochs1
+num_epochs_siamese = opt.nepochs2
 
 # Network params
 dropout_rate = opt.dropout
@@ -301,13 +303,11 @@ with tf.Session() as sess:
 
     lowest_loss, lowest_xent, highest_acc = 1e15, 1e15, 0.  # init before checkpointing
     # Loop over number of epochs
-    for epoch in range(num_epochs):
 
-        print("{} Epoch number: {}".format(datetime.now(), epoch+1))
-
-        # Initialize iterator with the training dataset
-        if opt.siamese: # if using siamese training, do the following train and val process
-            print('{} Start Siamese Training'.format(datetime.now()))
+    if opt.siamese: # if using siamese model to pre-train fc7 layer and run validation
+        for epoch in range(num_epochs_siamese):
+            print("{} ------- Siamese Epoch number: {} ------- ".format(datetime.now(), epoch + 1))
+            # initialize before training
             sess.run(training_init_op)
             for step in range(train_batches_per_epoch // 2):
                 img_batch1, label_batch1 = sess.run(next_batch)
@@ -351,9 +351,23 @@ with tf.Session() as sess:
             print("{} Validation Loss = {:10f}".format(datetime.now(), float(test_loss)))
             print("{} Validation Xent = {:10f}".format(datetime.now(), float(test_xent)))
 
-        # Regardless of whether using siamese training, do the following supervised train and val process
+            # save checkpoint of the model
+            if test_loss < lowest_loss:
+                lowest_loss = test_loss
+                print('{} Lowest siamese-loss renewed to {}'.format(datetime.now(), lowest_loss))
+                if not opt.noCheck:
+                    print('{} Saving checkpoint of the model ...'.format(datetime.now()))
+                    checkpoint_name = os.path.join(checkpoint_path, 'model_lowest_siamloss.ckpt')
+                    save_path = saver.save(sess, checkpoint_name)
+                    print("{} Model checkpoint saved at {}".format(datetime.now(), checkpoint_name))
+            else: # if test_loss is no better than the current best
+                print('{} Lowest siamese-loss remained {}'.format(datetime.now(), lowest_loss))
+
+    # Regardless of whether using siamese training, do the following supervised train and val process
+    for epoch in range(num_epochs_supervised):
+        print("{} ------- Supervised Training Epoch number: {} ------- ".format(datetime.now(), epoch+1))
+        # Initialize iterator with the training dataset
         sess.run(training_init_op)
-        print('{} Start Supervised Training'.format(datetime.now()))
         for step in range(train_batches_per_epoch):
             # get next batch of data
             img_batch, label_batch = sess.run(next_batch)
@@ -398,18 +412,7 @@ with tf.Session() as sess:
         print("{} Validation Cross-Ent = {}".format(datetime.now(), test_xent))
 
         # save checkpoint of the model
-        if opt.siamese:
-            if test_loss < lowest_loss:
-                lowest_loss = test_loss
-                print('{} Lowest siamese-loss renewed to {}'.format(datetime.now(), lowest_loss))
-                if not opt.noCheck:
-                    print('{} Saving checkpoint of the model ...'.format(datetime.now()))
-                    checkpoint_name = os.path.join(checkpoint_path, 'model_lowest_siamloss.ckpt')
-                    save_path = saver.save(sess, checkpoint_name)
-                    print("{} Model checkpoint saved at {}".format(datetime.now(), checkpoint_name))
-            else: # if test_loss is no better than the current best
-                print('{} Lowest siamese-loss remained {}'.format(datetime.now(), lowest_loss))
-        elif opt.checkStd == 'xent': # if the checkpointing standard is lowest cross-entropy, do the following
+        if opt.checkStd == 'xent': # if the checkpointing standard is lowest cross-entropy, do the following
             if test_xent < lowest_xent: # if test_xent is beneath current lowest
                 lowest_xent = test_xent # update lowest cross-entropy
                 print('{} Lowest cross-entropy renewed to {}'.format(datetime.now(), lowest_xent))
