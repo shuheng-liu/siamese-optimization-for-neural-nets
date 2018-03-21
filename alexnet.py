@@ -62,14 +62,13 @@ class AlexNet(object):
             self.latent2, self.embed2 = self.fc7, self.fc8
 
         # define xent_loss
-        self.y = tf.placeholder(tf.float32, [None, None])
+        self.y1 = tf.placeholder(tf.float32, [None, None])
+        self.y2 = tf.placeholder(tf.float32, [None, None]) # if not using siamese-training, y2 will not be used
         self.xent_loss = xent_loss(self)
         if self.isSiamese:
-            self.y_cmp = tf.placeholder(tf.float32, [None], name='y_cmp')
             self.quadratic_siamese_loss = quadratic_siamese_loss(self, margin=margin)
             self.linear_siamese_loss = linear_siamese_loss(self, margin=margin)
         else:
-            self.y_cmp = tf.placeholder(tf.float32, [None], name='y_cmp')
             self.quadratic_siamese_loss = self.xent_loss
             self.linear_siamese_loss = self.xent_loss
 
@@ -232,21 +231,27 @@ def quadratic_siamese_loss(net, margin = 5.0):
     This function computes quadratic xent_loss given the pairs (input1, class1) and (input2, class2)
     :param net: the used alexnet instance
     :param margin: the threshold for xent_loss when c1 != c2
-    :return: the quadratic xent_loss introduced by the distance between the embeddings of input1 and input2. If they have
-    the same class label, the xent_loss is defined by ||embed1 - embed2||; if they have different class labels,
+    :return: the quadratic xent_loss introduced by the distance between the embeddings of input1 and input2. If they
+    have the same class label, the xent_loss is defined by ||embed1 - embed2||; if they have different class labels,
     the xent_loss is defined by ReLU(margin - ||embed1 - embed2||)
     '''
     assert net.isSiamese, 'the model is not a Siamese Network, check again'
     # eucd2 = tf.reduce_sum((net.embed1 - net.embed2) ** 2, name='eucd2')
     eucd2 = tf.reduce_sum((net.latent1 - net.latent2) ** 2, name='eucd2')
     eucd = tf.sqrt(eucd2+1e-6, name='eucd')
+    y1, y2 = tf.argmax(net.y1), tf.arg_max(net.y2)
+    y_cmp = tf.cast(y1 - y2, tf.bool) # xor operation
     margin = tf.constant(margin, name='margin')
-    # if input1 and input2 have the same class label
-    loss1 = tf.multiply(net.y_cmp, eucd2, name = 'quad_loss1')
+    # if input1 and input2 have the same class label WHICH IS POSITIVE
+    loss1 = tf.multiply(y1, tf.multiply(1. - net.y_cmp, eucd2), name = 'quad_loss1')
     # if input1 and input2 have different class labels
-    loss2 = tf.multiply(1.-net.y_cmp, tf.nn.relu(margin - eucd)**2, name='quad_loss2')
+    loss2 = tf.multiply(net.y_cmp, tf.nn.relu(margin - eucd)**2, name='quad_loss2')
     loss = tf.reduce_mean(loss1 + loss2, name='reduced_quadloss')
     return loss
+
+def asymmetric_quadratic_siamese_loss(net, margin = 5.0):
+    assert net.isSiamese, 'the model is not a Siamese Network, check again'
+    eucd2 = tf.reduce_mean()
 
 def linear_siamese_loss(net, margin = 5.0):
     assert net.isSiamese, 'the model is not a siamese network, check again'
@@ -264,4 +269,4 @@ def xent_loss(net):
     '''returns a cross-entropy xent_loss'''
     with tf.name_scope("cross_ent"):
         return tf.reduce_mean(
-            tf.nn.softmax_cross_entropy_with_logits(logits=net.fc8, labels=net.y), name = 'xent_loss')
+            tf.nn.softmax_cross_entropy_with_logits(logits=net.fc8, labels=net.y1), name = 'xent_loss')
