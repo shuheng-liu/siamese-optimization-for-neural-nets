@@ -22,6 +22,7 @@ from datagenerator import ImageDataGenerator
 from datetime import datetime
 from tensorflow.contrib.data import Iterator
 from tensorflow.contrib.tensorboard.plugins import projector
+from metrics import Metrics
 import math
 """
 Configuration Part.
@@ -87,15 +88,8 @@ def auto_adapt_batch(train_size, val_size, max_size = 256):
 
 
 # define a function to write metrics_dict for floydhub to parsezz
-def write_floyd_metric(metrics, values):
-    """This function writes out metrics_dict in certain formats for FloydHub Parser to Parse
-	and generates figures, See https://docs.floydhub.com/guides/jobs/metrics_dict/ for more
-	information"""
-    if not isinstance(metrics, (tuple, list)): metrics = [metrics]
-    if not isinstance(values, (tuple, list)): values = [values]
-    for metric, value in zip(metrics, values):
-        sys.stdout.write('{"metric": "%s", "value": %f}\n' % (metric, value))
-
+met_siamese = Metrics(beta=0.)
+met_supervised = Metrics(beta=0.)
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--train0', required=True, help='paths to negative training dataset, separated by space')
@@ -358,7 +352,8 @@ with tf.Session() as sess:
             test_xent /= test_count
             print("{} Validation Loss = {:10f}".format(datetime.now(), float(test_loss)))
             print("{} Validation Xent = {:10f}".format(datetime.now(), float(test_xent)))
-            write_floyd_metric(('val-loss', 'val-xent'), (test_loss, test_xent))
+            met_siamese.update_metrics(('val-loss', 'val-xent'), (test_loss, test_xent))
+            met_siamese.write_metrics()
 
             # save checkpoint of the model
             if test_loss < lowest_loss:
@@ -416,7 +411,8 @@ with tf.Session() as sess:
         test_xent /= test_count
         print("{} Validation Accuracy = {}".format(datetime.now(), test_acc))
         print("{} Validation Cross-Ent = {}".format(datetime.now(), test_xent))
-        write_floyd_metric(('val-acc', 'val-xent'), (test_acc, test_xent))
+        met_supervised.update_metrics(('val-acc', 'val-xent'), (test_acc, test_xent))
+        met_supervised.write_metrics()
 
         # save checkpoint of the model
         if opt.checkStd == 'xent': # if the checkpointing standard is lowest cross-entropy, do the following
