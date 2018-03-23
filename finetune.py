@@ -86,10 +86,10 @@ def auto_adapt_batch(train_size, val_size, max_size = 256):
     return 32 # never too be actually executed
 
 
-# define a function to write metrics for floydhub to parse
+# define a function to write metrics_dict for floydhub to parsezz
 def write_floyd_metric(metrics, values):
-    """This function writes out metrics in certain formats for FloydHub Parser to Parse
-	and generates figures, See https://docs.floydhub.com/guides/jobs/metrics/ for more
+    """This function writes out metrics_dict in certain formats for FloydHub Parser to Parse
+	and generates figures, See https://docs.floydhub.com/guides/jobs/metrics_dict/ for more
 	information"""
     if not isinstance(metrics, (tuple, list)): metrics = [metrics]
     if not isinstance(values, (tuple, list)): values = [values]
