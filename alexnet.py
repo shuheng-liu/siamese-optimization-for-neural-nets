@@ -21,14 +21,14 @@ folder as this file:
 @author: Frederik Kratzert (contact: f.kratzert(at)gmail.com)
 """
 
-import tensorflow as tf
 import numpy as np
+import tensorflow as tf
 
 
 class AlexNet(object):
     """Implementation of the AlexNet."""
 
-    def __init__(self, x, keep_prob, num_classes, skip_layer, margin=5.0,
+    def __init__(self, x, keep_prob, num_classes, skip_layer, margin=5.0, falpha=2.0,
                  weights_path='/pretrained/bvlc_alexnet.npy'):
         """Create the graph of the AlexNet model.
 
@@ -43,8 +43,10 @@ class AlexNet(object):
         """
         # Parse input arguments into class variables
         self.isSiamese = isinstance(x, tuple)
-        if self.isSiamese: self.X1, self.X2 = x[0], x[1]
-        else: self.X1, self.X2 = x, x # self.X2 is never used
+        if self.isSiamese:
+            self.X1, self.X2 = x[0], x[1]
+        else:
+            self.X1, self.X2 = x, x  # self.X2 is never used
         self.NUM_CLASSES = num_classes
         self.KEEP_PROB = keep_prob
         self.SKIP_LAYER = skip_layer
@@ -63,15 +65,16 @@ class AlexNet(object):
 
         # define xent_loss
         self.y1 = tf.placeholder(tf.float32, [None, None])
-        self.y2 = tf.placeholder(tf.float32, [None, None]) # if not using siamese-training, y2 will not be used
+        self.y2 = tf.placeholder(tf.float32, [None, None])  # if not using siamese-training, y2 will not be used
         self.xent_loss = xent_loss(self)
+        self.get_precision_recall()
+        self.F_alpha = (1 + falpha) / (1 / self.precision + 1 / self.recall)
         if self.isSiamese:
             self.quadratic_siamese_loss = quadratic_siamese_loss(self, margin=margin)
-            self.linear_siamese_loss = linear_siamese_loss(self, margin=margin)
+            # self.linear_siamese_loss = linear_siamese_loss(self, margin=margin)
         else:
             self.quadratic_siamese_loss = self.xent_loss
             self.linear_siamese_loss = self.xent_loss
-
 
     def create(self, X):
         """Create the network graph. returns tensors of fc7 and fc8"""
@@ -79,12 +82,12 @@ class AlexNet(object):
         conv1 = conv(X, 11, 11, 96, 4, 4, padding='VALID', name='conv1')
         norm1 = lrn(conv1, 2, 1e-05, 0.75, name='norm1')
         pool1 = max_pool(norm1, 3, 3, 2, 2, padding='VALID', name='pool1')
-        
+
         # 2nd Layer: Conv (w ReLu)  -> Lrn -> Pool with 2 groups
         conv2 = conv(pool1, 5, 5, 256, 1, 1, groups=2, name='conv2')
         norm2 = lrn(conv2, 2, 1e-05, 0.75, name='norm2')
         pool2 = max_pool(norm2, 3, 3, 2, 2, padding='VALID', name='pool2')
-        
+
         # 3rd Layer: Conv (w ReLu)
         conv3 = conv(pool2, 3, 3, 384, 1, 1, name='conv3')
 
@@ -96,8 +99,8 @@ class AlexNet(object):
         pool5 = max_pool(conv5, 3, 3, 2, 2, padding='VALID', name='pool5')
 
         # 6th Layer: Flatten -> FC (w ReLu) -> Dropout
-        flattened = tf.reshape(pool5, [-1, 6*6*256])
-        fc6 = fc(flattened, 6*6*256, 4096, name='fc6')
+        flattened = tf.reshape(pool5, [-1, 6 * 6 * 256])
+        fc6 = fc(flattened, 6 * 6 * 256, 4096, name='fc6')
         dropout6 = dropout(fc6, self.KEEP_PROB)
 
         # 7th Layer: FC (w ReLu) -> Dropout
@@ -140,6 +143,14 @@ class AlexNet(object):
                             var = tf.get_variable('weights', trainable=False)
                             session.run(var.assign(data))
 
+    def get_precision_recall(self):
+        self.TP = tf.reduce_sum(tf.argmax(self.y1) * tf.argmax(self.fc8))
+        self.FP = tf.reduce_sum((1 - tf.argmax(self.y1)) * tf.argmax(self.fc8))
+        self.FN = tf.reduce_sum(tf.argmax(self.y1) * (1 - tf.argmax(self.fc8)))
+        self.FP = tf.reduce_mean((1 - tf.argmax(self.y1)))
+        self.precision = self.TP / (self.TP + self.FP)
+        self.recall = self.TP / (self.TP + self.FN)
+
 
 def conv(x, filter_height, filter_width, num_filters, stride_y, stride_x, name,
          padding='SAME', groups=1):
@@ -159,7 +170,7 @@ def conv(x, filter_height, filter_width, num_filters, stride_y, stride_x, name,
         # Create tf variables for the weights and biases of the conv layer
         weights = tf.get_variable('weights', shape=[filter_height,
                                                     filter_width,
-                                                    input_channels/groups,
+                                                    input_channels / groups,
                                                     num_filters])
         biases = tf.get_variable('biases', shape=[num_filters])
 
@@ -226,7 +237,7 @@ def dropout(x, keep_prob):
     return tf.nn.dropout(x, keep_prob)
 
 
-def quadratic_siamese_loss(net, margin = 5.0):
+def quadratic_siamese_loss(net, margin=5.0):
     '''
     This function computes quadratic xent_loss given the pairs (input1, class1) and (input2, class2)
     :param net: the used alexnet instance
@@ -238,35 +249,41 @@ def quadratic_siamese_loss(net, margin = 5.0):
     assert net.isSiamese, 'the model is not a Siamese Network, check again'
     # eucd2 = tf.reduce_sum((net.embed1 - net.embed2) ** 2, name='eucd2')
     eucd2 = tf.reduce_sum((net.latent1 - net.latent2) ** 2, name='eucd2')
-    eucd = tf.sqrt(eucd2+1e-6, name='eucd')
-    y1, y2 = tf.argmax(net.y1), tf.arg_max(net.y2)
-    y_cmp = tf.cast(y1 - y2, tf.bool) # xor operation
+    eucd = tf.sqrt(eucd2 + 1e-6, name='eucd')
+    y1, y2 = tf.argmax(net.y1), tf.argmax(net.y2)
+    y_cmp = tf.cast(y1 - y2, tf.bool)  # xor operation
+    print('\n\n\n', y_cmp, '\n\n\n')
     margin = tf.constant(margin, name='margin')
     # if input1 and input2 have the same class label WHICH IS POSITIVE
-    loss1 = tf.multiply(y1, tf.multiply(1. - net.y_cmp, eucd2), name = 'quad_loss1')
+    # loss1 = tf.multiply(y1, tf.multiply(1. - y_cmp, eucd2), name = 'quad_loss1')
+    loss1 = tf.multiply(1. - y_cmp, eucd2)
+    loss1 = tf.multiply(y1, loss1, name='quad_loss1')
     # if input1 and input2 have different class labels
-    loss2 = tf.multiply(net.y_cmp, tf.nn.relu(margin - eucd)**2, name='quad_loss2')
+    loss2 = tf.multiply(y_cmp, tf.nn.relu(margin - eucd) ** 2, name='quad_loss2')
     loss = tf.reduce_mean(loss1 + loss2, name='reduced_quadloss')
     return loss
 
-def asymmetric_quadratic_siamese_loss(net, margin = 5.0):
+
+def asymmetric_quadratic_siamese_loss(net, margin=5.0):
     assert net.isSiamese, 'the model is not a Siamese Network, check again'
     eucd2 = tf.reduce_mean()
 
-def linear_siamese_loss(net, margin = 5.0):
+
+def linear_siamese_loss(net, margin=5.0):
     assert net.isSiamese, 'the model is not a siamese network, check again'
-    eucd2 = tf.reduce_sum((net.embed1-net.embed2)**2, name='eucd2')
-    eucd  =tf.sqrt(eucd2 + 1e-6, name = 'eucd')
-    margin = tf.constant(margin, name = 'margin')
+    eucd2 = tf.reduce_sum((net.embed1 - net.embed2) ** 2, name='eucd2')
+    eucd = tf.sqrt(eucd2 + 1e-6, name='eucd')
+    margin = tf.constant(margin, name='margin')
     # if input1 and input2 share the same class label
-    loss1 = tf.pow(tf.multiply(net.y_cmp, eucd), 2, name = 'loss1')
+    loss1 = tf.pow(tf.multiply(net.y_cmp, eucd), 2, name='loss1')
     # if input1 and input2 have different class labels
-    loss2 = tf.pow(tf.multiply(1-net.y_cmp, (tf.nn.relu(margin -  eucd))), 2, name = 'loss2')
-    loss = tf.reduce_mean(loss1 + loss2, name = 'reduced_linearloss')
+    loss2 = tf.pow(tf.multiply(1 - net.y_cmp, (tf.nn.relu(margin - eucd))), 2, name='loss2')
+    loss = tf.reduce_mean(loss1 + loss2, name='reduced_linearloss')
     return loss
+
 
 def xent_loss(net):
     '''returns a cross-entropy xent_loss'''
     with tf.name_scope("cross_ent"):
         return tf.reduce_mean(
-            tf.nn.softmax_cross_entropy_with_logits(logits=net.fc8, labels=net.y1), name = 'xent_loss')
+            tf.nn.softmax_cross_entropy_with_logits(logits=net.fc8, labels=net.y1), name='xent_loss')

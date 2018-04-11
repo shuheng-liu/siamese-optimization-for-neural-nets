@@ -4,9 +4,8 @@
 
 """Containes a helper class for image input pipelines in tensorflow."""
 
-import tensorflow as tf
 import numpy as np
-
+import tensorflow as tf
 from tensorflow.contrib.data import Dataset
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework.ops import convert_to_tensor
@@ -66,11 +65,11 @@ class ImageDataGenerator(object):
         # distinguish between train/infer. when calling the parsing functions
         if mode == 'training':
             data = data.map(self._parse_function_train, num_threads=8,
-                      output_buffer_size=100*batch_size)
+                            output_buffer_size=100 * batch_size)
 
         elif mode == 'inference':
             data = data.map(self._parse_function_inference, num_threads=8,
-                      output_buffer_size=100*batch_size)
+                            output_buffer_size=100 * batch_size)
 
         else:
             raise ValueError("Invalid mode '%s'." % (mode))
@@ -92,7 +91,7 @@ class ImageDataGenerator(object):
             lines = f.readlines()
             for line in lines:
                 items = line.split(' ')
-                self.img_paths.append(' '.join(items[:-1])) # in case the filename contains spaces
+                self.img_paths.append(' '.join(items[:-1]))  # in case the filename contains spaces
                 self.labels.append(int(items[-1]))
 
     def _shuffle_lists(self):
