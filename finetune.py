@@ -83,7 +83,7 @@ def auto_adapt_batch(train_size, val_size, max_size=256):
     numerator = min(train_size, val_size)
     if numerator < max_size: return numerator
     denominator = 0
-    while True:
+    while (True):
         denominator += 1
         batch_size = numerator // denominator
         if batch_size <= max_size: return batch_size
@@ -98,9 +98,11 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--train0', required=True, help='paths to negative training dataset, separated by space')
 parser.add_argument('--train1', required=True, help='paths to positive training dataset, separated by space')
 parser.add_argument('--train2', default='', help='paths to other disease training dataset, separated by space')
+parser.add_argument('--trainCeils', default=None, help='Ceils of Training')
 parser.add_argument('--val0', required=True, help='paths to negative validation dataset, separated by space')
 parser.add_argument('--val1', required=True, help='paths to positive validation dataset, separated by space')
 parser.add_argument('--val2', default='', help='paths to other disease validation dataset, separated by space')
+parser.add_argument('--valCeils', default=None, help='Ceils of validation')
 parser.add_argument('--lr1', type=float, default=1e-3, help='learning rate for supervised learning, default=1e-3')
 parser.add_argument('--lr2', type=float, default=5e-7, help='learning rate for siamese learning, default=5e-7')
 parser.add_argument('--nepochs1', type=int, default=100, help='number of supervised epochs, default = 100')
@@ -148,12 +150,22 @@ checkpoint_path = os.path.join(opt.outf, 'checkpoints')
 sample_path = os.path.join(opt.outf, 'samplelist')
 
 # make train & val & test list, and do stats
+# paths
 train0, train1, train2 = opt.train0.split(), opt.train1.split(), opt.train2.split()
 val0, val1, val2 = opt.val0.split(), opt.val1.split(), opt.val2.split()
 train, val = train0 + train1 + train2, val0 + val1 + val2
+test = train + val
+# flags
 train_flags = [0] * len(train0) + [1] * len(train1) + [2] * len(train2)
 val_flags = [0] * len(val0) + [1] * len(val1) + [2] * len(val2)
-test, test_flags = train + val, train_flags + val_flags
+test_flags = train_flags + val_flags
+# ceils
+train_ceils = opt.trainCeils.split() if opt.trainCeils else [-1] * len(train_flags)
+train_ceils = [int(c) for c in train_ceils]
+val_ceils = opt.valCeils.split() if opt.valCeils else [-1] * len(train_flags)
+val_ceils = [int(c) for c in val_ceils]
+test_ceils = train_ceils + val_ceils
+# do list generating
 train_file, train_length = make_list(train, flags=train_flags, mode='train', store_path=sample_path)
 val_file, val_length = make_list(val, flags=val_flags, mode='val', store_path=sample_path)
 test_file, test_length = make_list(test, flags=test_flags, mode='test', store_path=sample_path)
