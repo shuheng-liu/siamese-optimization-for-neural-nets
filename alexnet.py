@@ -165,6 +165,7 @@ class AlexNet(Model):
 
     # TODO debug _create_loss, precision and F_score is somehow always NaN, maybe due to wrong choice of axis in argmax
     def _create_stats(self, alpha):
+        """only works for binary classification"""
         # only works for binary classification
         prediction = tf.argmax(self.fc8, axis=1, name='alexnet-prediction')
         ground_truth = tf.argmax(self.y, axis=1, name='alexnet-ground-truth')
@@ -228,9 +229,13 @@ class SiameseAlexNet(Model):
         eucd = tf.sqrt(eucd2, name="euclidean_dist")
         # y1, y2 and y_cmp should be wrapped instead of being a class member
         y1 = tf.argmax(self.net1.y, axis=1, name='siam-y1')
-        y2 = tf.argmax(self.net1.y, axis=1, name='siam-y2')
+        y2 = tf.argmax(self.net2.y, axis=1, name='siam-y2')
+        self.y1_label, self.y2_label = y1, y2
         y_diff = tf.cast(y1 - y2, tf.bool, name="comparison_label_in_tf.bool")
         y_diff = tf.cast(y_diff, tf.float32, name="comparison_label_in_tf.float32")
+        self.diff_count = tf.reduce_sum(y_diff, name='diff_count')
+        self.same_count = tf.reduce_sum(tf.cast(y1 == y2, tf.int32), name='same_count')
+        self.same_count = tf.reduce_sum(tf.cast(tf.equal(y1, y2), tf.float32))
         margin = tf.constant(self.margin, name="margin")
         # if label1 and label2 are the same, y_diff = 0, punish the part where eucd exceeds margin
         loss_same = tf.reduce_mean(tf.multiply(1 - y_diff, tf.nn.relu(eucd - margin)) ** 2, name='loss_same')
