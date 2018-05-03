@@ -225,7 +225,7 @@ class SiameseAlexNet(Model):
 
     def _create_loss(self, proj):
         proj1, proj2 = self._get_projections(proj)
-        eucd2 = tf.reduce_sum((proj1 - proj2) ** 2, name="euclidean_dist_squared")
+        eucd2 = tf.reduce_sum((proj1 - proj2) ** 2, axis=1, name="euclidean_dist_squared")
         eucd = tf.sqrt(eucd2, name="euclidean_dist")
         # y1, y2 and y_cmp should be wrapped instead of being a class member
         y1 = tf.argmax(self.net1.y, axis=1, name='siam-y1')
@@ -238,9 +238,9 @@ class SiameseAlexNet(Model):
         self.same_count = tf.reduce_sum(tf.cast(tf.equal(y1, y2), tf.float32))
         margin = tf.constant(self.margin, name="margin")
         # if label1 and label2 are the same, y_diff = 0, punish the part where eucd exceeds margin
-        loss_same = tf.reduce_mean(tf.multiply(1 - y_diff, tf.nn.relu(eucd - margin)) ** 2, name='loss_same')
+        loss_same = tf.reduce_mean(tf.multiply(1 - y_diff, tf.nn.relu(eucd - margin)) ** 2, axis=0, name='loss_same')
         # if label1 and label2 are different, y_diff = 1, punish the part where eucd falls short of margin
-        loss_diff = tf.reduce_mean(tf.multiply(y_diff, tf.nn.relu(margin - eucd)) ** 2, name='loss_diff')
+        loss_diff = tf.reduce_mean(tf.multiply(y_diff, tf.nn.relu(margin - eucd)) ** 2, axis=0, name='loss_diff')
         self.loss = tf.add(loss_same, loss_diff, name="siamese-loss")
         print(self.loss)
 
