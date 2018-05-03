@@ -25,10 +25,37 @@ import numpy as np
 import tensorflow as tf
 
 
-class AlexNet(object):
-    """Implementation of the AlexNet."""
+class Model(object):
+    def __init__(self):
+        pass
 
-    def __init__(self, x, keep_prob, num_classes, skip_layer, margin=5.0, falpha=2.0,
+    def set_model_vars(self, variable_dict, session):
+        pass
+
+    def get_model_vars(self, session, init=False):
+        return {}
+
+    def load_model_vars(self, path: str, session):
+        pass
+
+    def save_model_vars(self, path: str, session, init=False):
+        pass
+
+    def load_model_pretrained(self, session):
+        pass
+
+    def _create_loss(self, *args):
+        pass
+
+
+# noinspection PyCompatibility
+class AlexNet(Model):
+    """Implementation of the AlexNet."""
+    TRAIN_LAYERS = ...  # type: set
+    y = ...  # type: tf.placeholder
+
+    # TODO ATTENTION: loading pretrained weights is called outside the constructor
+    def __init__(self, x, keep_prob, num_classes, train_layers, falpha=2.0,
                  weights_path='/pretrained/bvlc_alexnet.npy'):
         """Create the graph of the AlexNet model.
 
@@ -36,82 +63,83 @@ class AlexNet(object):
             x: Placeholder for the input tensor.
             keep_prob: Dropout probability.
             num_classes: Number of classes in the dataset.
-            skip_layer: List of names of the layer, that get trained from
+            train_layers: List of names of the layer, that get trained from
                 scratch
             weights_path: Complete path to the pretrained weight file, if it
                 isn't in the same folder as this code
         """
         # Parse input arguments into class variables
-        self.isSiamese = isinstance(x, tuple)
-        if self.isSiamese:
-            self.X1, self.X2 = x[0], x[1]
-        else:
-            self.X1, self.X2 = x, x  # self.X2 is never used
+        super(AlexNet, self).__init__()
+        self.X = x
+        # self.X = tf.placeholder(tf.float32, [None, 227, 227, 3])
         self.NUM_CLASSES = num_classes
         self.KEEP_PROB = keep_prob
-        self.SKIP_LAYER = skip_layer
+        self.TRAIN_LAYERS = train_layers
         self.WEIGHTS_PATH = weights_path
+        self.ALPHA = falpha
 
         # Call the create function to build the computational graph of AlexNet
         # with tf.variable_scope('') as scope:
 
-        self.fc7, self.fc8 = self.create(self.X1)
-        self.latent1, self.embed1 = self.fc7, self.fc8
-        if self.isSiamese:
-            tf.get_variable_scope().reuse_variables()
-            self.latent2, self.embed2 = self.create(self.X2)
-        else:
-            self.latent2, self.embed2 = self.fc7, self.fc8
+        self._create_discriminator()
 
-        # define xent_loss
-        self.y1 = tf.placeholder(tf.float32, [None, None])
-        self.y2 = tf.placeholder(tf.float32, [None, None])  # if not using siamese-training, y2 will not be used
-        self.xent_loss = xent_loss(self)
-        self.get_precision_recall()
-        self.F_alpha = (1 + falpha) / (1 / self.precision + 1 / self.recall)
-        if self.isSiamese:
-            self.quadratic_siamese_loss = quadratic_siamese_loss(self, margin=margin)
-            # self.linear_siamese_loss = linear_siamese_loss(self, margin=margin)
-        else:
-            self.quadratic_siamese_loss = self.xent_loss
-            self.linear_siamese_loss = self.xent_loss
+        # define metrics
+        # TODO consider switching the second dimension to self.NUM_CLASSES
+        self.y = tf.placeholder(tf.float32, [None, self.NUM_CLASSES], name='y')
+        self.correct_pred = tf.equal(tf.argmax(self.fc8, 1), tf.argmax(self.y, 1))
+        self.accuracy = tf.reduce_mean(tf.cast(self.correct_pred, tf.float32), name='accuracy')
 
-    def create(self, X):
+        self._create_loss()
+        self._create_stats(falpha)
+
+    def _create_discriminator(self):
         """Create the network graph. returns tensors of fc7 and fc8"""
         # 1st Layer: Conv (w ReLu) -> Lrn -> Pool
-        conv1 = conv(X, 11, 11, 96, 4, 4, padding='VALID', name='conv1')
+        conv1 = conv(self.X, 11, 11, 96, 4, 4, padding='VALID', name='conv1')
         norm1 = lrn(conv1, 2, 1e-05, 0.75, name='norm1')
         pool1 = max_pool(norm1, 3, 3, 2, 2, padding='VALID', name='pool1')
+        self.conv1, self.norm1, self.pool1 = conv1, norm1, pool1
 
         # 2nd Layer: Conv (w ReLu)  -> Lrn -> Pool with 2 groups
         conv2 = conv(pool1, 5, 5, 256, 1, 1, groups=2, name='conv2')
         norm2 = lrn(conv2, 2, 1e-05, 0.75, name='norm2')
         pool2 = max_pool(norm2, 3, 3, 2, 2, padding='VALID', name='pool2')
+        self.conv2, self.norm2, self.pool1 = conv2, norm2, pool2
 
         # 3rd Layer: Conv (w ReLu)
         conv3 = conv(pool2, 3, 3, 384, 1, 1, name='conv3')
+        self.conv3 = conv3
 
         # 4th Layer: Conv (w ReLu) splitted into two groups
         conv4 = conv(conv3, 3, 3, 384, 1, 1, groups=2, name='conv4')
+        self.conv4 = conv4
 
         # 5th Layer: Conv (w ReLu) -> Pool splitted into two groups
         conv5 = conv(conv4, 3, 3, 256, 1, 1, groups=2, name='conv5')
         pool5 = max_pool(conv5, 3, 3, 2, 2, padding='VALID', name='pool5')
+        self.conv5, self.pool5 = conv5, pool5
 
         # 6th Layer: Flatten -> FC (w ReLu) -> Dropout
         flattened = tf.reshape(pool5, [-1, 6 * 6 * 256])
         fc6 = fc(flattened, 6 * 6 * 256, 4096, name='fc6')
-        dropout6 = dropout(fc6, self.KEEP_PROB)
+        dropout6 = dropout(fc6, self.KEEP_PROB, name='dropout6')
+        self.flattened, self.fc6, self.dropout6 = flattened, fc6, dropout6
 
         # 7th Layer: FC (w ReLu) -> Dropout
         fc7 = fc(dropout6, 4096, 4096, name='fc7')
-        dropout7 = dropout(fc7, self.KEEP_PROB)
+        dropout7 = dropout(fc7, self.KEEP_PROB, name='dropout7')
+        self.fc7, self.dropout7 = fc7, dropout7
 
         # 8th Layer: FC and return unscaled activations
         fc8 = fc(dropout7, 4096, self.NUM_CLASSES, relu=False, name='fc8')
-        return fc7, fc8
+        self.fc8 = fc8
 
-    def load_initial_weights(self, session):
+    def _create_loss(self):
+        with tf.name_scope("cross_ent"):
+            self.loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=self.fc8, labels=self.y),
+                                       name="loss")
+
+    def load_model_pretrained(self, session):
         """Load weights from file into network.
 
         As the weights from http://www.cs.toronto.edu/~guerzhoy/tf_alexnet/
@@ -120,40 +148,165 @@ class AlexNet(object):
         'biases') we need a special load function
         """
         # Load the weights into memory
-        weights_dict = np.load(self.WEIGHTS_PATH, encoding='bytes').item()
-
+        variable_dict = np.load(self.WEIGHTS_PATH, encoding='bytes').item()  # type: dict
         # Loop over all layer names stored in the weights dict
-        for op_name in weights_dict:
-
+        for op_name in variable_dict:  # type: str
             # Check if layer should be trained from scratch
-            if op_name not in self.SKIP_LAYER:
-
+            if op_name not in self.TRAIN_LAYERS:
                 with tf.variable_scope(op_name, reuse=True):
-
                     # Assign weights/biases to their corresponding tf variable
-                    for data in weights_dict[op_name]:
-
-                        # Biases
-                        if len(data.shape) == 1:
-                            var = tf.get_variable('biases', trainable=False)
+                    for data in variable_dict[op_name]:
+                        var_name = "biases" if len(data.shape) == 1 else "weights"
+                        var = tf.get_variable(var_name, trainable=False)
+                        try:
                             session.run(var.assign(data))
+                        except:
+                            print("Failed to assign value to", var.name)
 
-                        # Weights
-                        else:
-                            var = tf.get_variable('weights', trainable=False)
-                            session.run(var.assign(data))
-
-    def get_precision_recall(self):
-        self.TP = tf.reduce_sum(tf.argmax(self.y1) * tf.argmax(self.fc8))
-        self.FP = tf.reduce_sum((1 - tf.argmax(self.y1)) * tf.argmax(self.fc8))
-        self.FN = tf.reduce_sum(tf.argmax(self.y1) * (1 - tf.argmax(self.fc8)))
-        self.FP = tf.reduce_mean((1 - tf.argmax(self.y1)))
+    # TODO debug _create_loss, precision and F_score is somehow always NaN, maybe due to wrong choice of axis in argmax
+    def _create_stats(self, alpha):
+        # only works for binary classification
+        prediction = tf.argmax(self.fc8, axis=1, name='alexnet-prediction')
+        ground_truth = tf.argmax(self.y, axis=1, name='alexnet-ground-truth')
+        self.prediction, self.ground_truth = prediction, ground_truth
+        self.TP = tf.reduce_sum(prediction * ground_truth)  # True Positive
+        self.TN = tf.reduce_sum((1 - prediction) * (1 - ground_truth))  # True Negative
+        self.FP = tf.reduce_sum(prediction * (1 - ground_truth))  # False Positive
+        self.FN = tf.reduce_sum((1 - prediction) * ground_truth)  # False Negative
         self.precision = self.TP / (self.TP + self.FP)
         self.recall = self.TP / (self.TP + self.FN)
+        self.F_alpha = (1 + alpha) / (1 / self.precision + alpha / self.recall)
+        if self.NUM_CLASSES != 2:
+            print("Warning: precision, recall and F_alpha score does not apply to Multi-Label Classification")
+
+    def get_model_vars(self, session, init=False):
+        if init: session.run(tf.global_variables_initializer())
+        layers = ['conv1', 'conv2', 'conv3', 'conv4', 'conv5', 'fc6', 'fc7', 'fc8']
+        variable_dict = {layer: [] for layer in layers}
+        for layer in variable_dict:
+            with tf.variable_scope(layer, reuse=True):
+                for var_name in ["weights", "biases"]:
+                    var = tf.get_variable(var_name)
+                    variable_dict[layer].append(session.run(var))
+        return variable_dict
+
+    def set_model_vars(self, variable_dict, session):
+        for op_name in variable_dict:
+            with tf.variable_scope(op_name, reuse=True):
+                for data in variable_dict[op_name]:
+                    var_name = 'biases' if len(data.shape) == 1 else "weights"
+                    # in case set_model_vars() is called before load_model_pretrained(), set trainable
+                    var = tf.get_variable(var_name, trainable=op_name in self.TRAIN_LAYERS)
+                    session.run(var.assign(data))
+
+    def save_model_vars(self, path: str, session, init=False):
+        np.save(path, self.get_model_vars(session, init=init))
+
+    def load_model_vars(self, path: str, session):
+        variable_dict = np.load(path, encoding="bytes").item()  # type: dict
+        self.set_model_vars(variable_dict, session)
 
 
-def conv(x, filter_height, filter_width, num_filters, stride_y, stride_x, name,
-         padding='SAME', groups=1):
+class SiameseAlexNet(Model):
+    # TODO ATTENTION: loading pretrained weights is called outside the constructor
+    def __init__(self, x1, x2, keep_prob, num_classes, train_layers, name_scope="Siamese", proj="flattened",
+                 falpha=2.0, margin=5.0, weights_path='/pretrained/bvlc_alexnet.npy'):
+        super(SiameseAlexNet, self).__init__()
+        self.name_scope = name_scope
+        self.margin = margin
+        self.proj = proj
+        with tf.variable_scope(self.name_scope) as scope:
+            self.net1 = AlexNet(x1, keep_prob, num_classes, train_layers, falpha=falpha, weights_path=weights_path)
+            scope.reuse_variables()
+            self.net2 = AlexNet(x2, keep_prob, num_classes, train_layers, falpha=falpha, weights_path=weights_path)
+            # define a loss for Siamese Network
+            self._create_loss(proj)
+
+    def _create_loss(self, proj):
+        proj1, proj2 = self._get_projections(proj)
+        eucd2 = tf.reduce_sum((proj1 - proj2) ** 2, name="euclidean_dist_squared")
+        eucd = tf.sqrt(eucd2, name="euclidean_dist")
+        # y1, y2 and y_cmp should be wrapped instead of being a class member
+        y1 = tf.argmax(self.net1.y, axis=1, name='siam-y1')
+        y2 = tf.argmax(self.net1.y, axis=1, name='siam-y2')
+        y_diff = tf.cast(y1 - y2, tf.bool, name="comparison_label_in_tf.bool")
+        y_diff = tf.cast(y_diff, tf.float32, name="comparison_label_in_tf.float32")
+        margin = tf.constant(self.margin, name="margin")
+        # if label1 and label2 are the same, y_diff = 0, punish the part where eucd exceeds margin
+        loss_same = tf.reduce_mean(tf.multiply(1 - y_diff, tf.nn.relu(eucd - margin)) ** 2, name='loss_same')
+        # if label1 and label2 are different, y_diff = 1, punish the part where eucd falls short of margin
+        loss_diff = tf.reduce_mean(tf.multiply(y_diff, tf.nn.relu(margin - eucd)) ** 2, name='loss_diff')
+        self.loss = tf.add(loss_same, loss_diff, name="siamese-loss")
+        print(self.loss)
+
+    def _get_projections(self, proj):
+        print('projection =', proj, "type=", type(proj))
+        projections = (self.net1.dropout6, self.net2.dropout6)
+        try:
+            if proj == "fc6":
+                projections = (self.net1.fc6, self.net2.fc6)
+            elif proj == "fc7":
+                projections = (self.net1.fc7, self.net2.fc7)
+            elif proj == "fc8":
+                projections = (self.net1.fc8, self.net2.fc8)
+            elif proj == "dropout6":
+                projections = (self.net1.dropout6, self.net2.dropout6)
+            elif proj == "dropout7":
+                projections = (self.net1.dropout7, self.net2.dropout7)
+            elif proj == "flattened":
+                projections = (self.net1.flattened, self.net2.flattened)
+            else:
+                raise ValueError("Illegal Projection: " + proj)
+        except ValueError as e:
+            print(e)
+        finally:
+            print("projections of %s are " % self.name_scope, projections[0].name, projections[1].name)
+            print("dimensions of projection is", projections[0].shape, projections[1].shape)
+            return projections
+
+    def load_model_pretrained(self, session):
+        with tf.variable_scope(self.name_scope, reuse=True):
+            self.net1.load_model_pretrained(session)
+
+    def load_model_vars(self, path: str, session):
+        with tf.variable_scope(self.name_scope, reuse=True):
+            self.net1.load_model_vars(path, session)
+
+    def save_model_vars(self, path: str, session, init=False):
+        with tf.variable_scope(self.name_scope):
+            self.net1.save_model_vars(path, session, init=init)
+
+    def get_model_vars(self, session, init=False):
+        with tf.variable_scope(self.name_scope):
+            return self.net1.get_model_vars(session, init=init)
+
+    def set_model_vars(self, variable_dict, session):
+        with tf.variable_scope(self.name_scope):
+            return self.net1.set_model_vars(variable_dict, session)
+
+    # return a new instance of AlexNet with trainable variables
+    def get_net_copy(self, session, x=None, keep_prob=None, num_classes=None, train_layers=None, falpha=None,
+                     weights_path=None) -> AlexNet:
+        if x is None:
+            x = self.net1.X
+            print("Warning: x should be specified as a new placeholder")
+        if keep_prob is None:
+            keep_prob = self.net1.KEEP_PROB
+        if num_classes is None:
+            num_classes = self.net1.NUM_CLASSES
+        if train_layers is None:
+            train_layers = self.net1.TRAIN_LAYERS
+            print("Warning: train_layers should be specified as a new list of layer names")
+        if falpha is None:
+            falpha = self.net1.ALPHA
+        if weights_path is None:
+            weights_path = self.net1.WEIGHTS_PATH
+        new_net = AlexNet(x, keep_prob, num_classes, train_layers, falpha=falpha, weights_path=weights_path)
+        new_net.set_model_vars(self.get_model_vars(session), session)
+        return new_net
+
+
+def conv(x, filter_height, filter_width, num_filters, stride_y, stride_x, name, padding='SAME', groups=1):
     """Create a convolution layer.
 
     Adapted from: https://github.com/ethereon/caffe-tensorflow
@@ -217,8 +370,7 @@ def fc(x, num_in, num_out, name, relu=True):
         return act
 
 
-def max_pool(x, filter_height, filter_width, stride_y, stride_x, name,
-             padding='SAME'):
+def max_pool(x, filter_height, filter_width, stride_y, stride_x, name, padding='SAME'):
     """Create a max pooling layer."""
     return tf.nn.max_pool(x, ksize=[1, filter_height, filter_width, 1],
                           strides=[1, stride_y, stride_x, 1],
@@ -232,58 +384,38 @@ def lrn(x, radius, alpha, beta, name, bias=1.0):
                                               bias=bias, name=name)
 
 
-def dropout(x, keep_prob):
+def dropout(x, keep_prob, name='dropout'):
     """Create a dropout layer."""
-    return tf.nn.dropout(x, keep_prob)
+    return tf.nn.dropout(x, keep_prob, name=name)
 
 
-def quadratic_siamese_loss(net, margin=5.0):
-    '''
-    This function computes quadratic xent_loss given the pairs (input1, class1) and (input2, class2)
-    :param net: the used alexnet instance
-    :param margin: the threshold for xent_loss when c1 != c2
-    :return: the quadratic xent_loss introduced by the distance between the embeddings of input1 and input2. If they
-    have the same class label, the xent_loss is defined by ||embed1 - embed2||; if they have different class labels,
-    the xent_loss is defined by ReLU(margin - ||embed1 - embed2||)
-    '''
-    assert net.isSiamese, 'the model is not a Siamese Network, check again'
-    # eucd2 = tf.reduce_sum((net.embed1 - net.embed2) ** 2, name='eucd2')
-    eucd2 = tf.reduce_sum((net.latent1 - net.latent2) ** 2, name='eucd2')
-    eucd = tf.sqrt(eucd2 + 1e-6, name='eucd')
-    y1, y2 = tf.argmax(net.y1), tf.argmax(net.y2)
-    y_cmp = tf.cast(y1 - y2, tf.bool)  # xor operation
-    print('\n\n\n', y_cmp, '\n\n\n')
-    margin = tf.constant(margin, name='margin')
-    # if input1 and input2 have the same class label WHICH IS POSITIVE
-    # loss1 = tf.multiply(y1, tf.multiply(1. - y_cmp, eucd2), name = 'quad_loss1')
-    loss1 = tf.multiply(1. - y_cmp, eucd2)
-    loss1 = tf.multiply(y1, loss1, name='quad_loss1')
-    # if input1 and input2 have different class labels
-    loss2 = tf.multiply(y_cmp, tf.nn.relu(margin - eucd) ** 2, name='quad_loss2')
-    loss = tf.reduce_mean(loss1 + loss2, name='reduced_quadloss')
-    return loss
+if __name__ == "__main__":
+    # TODO how does the two nets in Siamese Net share the keep_prob placeholder?
+    keep_prob = tf.placeholder(tf.float32, [], name = 'keep_prob')
+    x = tf.placeholder(tf.float32, [None, 227, 227, 3], name='x')
+    # x1 = tf.placeholder(tf.float32, [None, 227, 227, 3], name='x1')
+    # x2 = tf.placeholder(tf.float32, [None, 227, 227, 3], name='x2')
+    # image_batch = np.random.rand(5, 227, 227, 3)
+    # label_batch = np.random.rand(5, 1000)
+    net = AlexNet(x, keep_prob, 3, ['fc6', 'fc7'])
+    # net = SiameseAlexNet(x1, x2, 0.5, 3, ['fc6', 'fc7', 'fc8'], name_scope="SiameseA", proj="flattened")
+    # netB = SiameseAlexNet(x1, x2, 0.5, 3, ['fc6', 'fc7', 'fc8'], name_scope="SiameseB")
+    # check_path = "/Users/liushuheng/Desktop/vars.npy"
+    with tf.Session() as sess:
+        sess.run(tf.global_variables_initializer())
+        net.load_model_pretrained(sess)
+    # y1 = sess.run(netA.net1.y, feed_dict={netA.net1.X: image_batch, netA.net1.y: label_batch})
+    # y2 = sess.run(netB.net1.y, feed_dict={netB.net1.X: image_batch, netB.net1.y: label_batch})
+    # netA.save_model_vars(check_path, sess)
+    # netB.load_model_vars(check_path, sess)
+    # y3 = sess.run(netB.net1.y, feed_dict={netB.net1.X: image_batch, netB.net1.y: label_batch})
+    # assert (y1 == y2).all(), "assertion1 failed"
+    # print("assertion1 passed")
+    # assert (y1 == y3).all(), "assertion2 failed"
+    # print("assertion2 passed")
+    # d = net.get_model_vars(sess)
+    # init_weights = np.load("/pretrained/bvlc_alexnet.npy", encoding="bytes").item()
 
-
-def asymmetric_quadratic_siamese_loss(net, margin=5.0):
-    assert net.isSiamese, 'the model is not a Siamese Network, check again'
-    eucd2 = tf.reduce_mean()
-
-
-def linear_siamese_loss(net, margin=5.0):
-    assert net.isSiamese, 'the model is not a siamese network, check again'
-    eucd2 = tf.reduce_sum((net.embed1 - net.embed2) ** 2, name='eucd2')
-    eucd = tf.sqrt(eucd2 + 1e-6, name='eucd')
-    margin = tf.constant(margin, name='margin')
-    # if input1 and input2 share the same class label
-    loss1 = tf.pow(tf.multiply(net.y_cmp, eucd), 2, name='loss1')
-    # if input1 and input2 have different class labels
-    loss2 = tf.pow(tf.multiply(1 - net.y_cmp, (tf.nn.relu(margin - eucd))), 2, name='loss2')
-    loss = tf.reduce_mean(loss1 + loss2, name='reduced_linearloss')
-    return loss
-
-
-def xent_loss(net):
-    '''returns a cross-entropy xent_loss'''
-    with tf.name_scope("cross_ent"):
-        return tf.reduce_mean(
-            tf.nn.softmax_cross_entropy_with_logits(logits=net.fc8, labels=net.y1), name='xent_loss')
+    # for var in tf.global_variables():
+    # # for var in tf.get_default_graph().get_operations():
+    #     print(var.name, end=" ")

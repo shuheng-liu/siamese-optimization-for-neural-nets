@@ -1,6 +1,8 @@
 import sys
-class Metrics():
-    def __init__(self, beta = 0.9):
+
+
+class Metrics:
+    def __init__(self, beta=0.9):
         self.metrics_dict = {}
         self.beta = 0.9
 
@@ -18,7 +20,7 @@ class Metrics():
         for metric, value in zip(metrics, values):
             self.update_metric(metric, value)
 
-    def write_metrics(self, metrics = None):
+    def write_metrics(self, metrics=None):
         """This function writes out metrics_dict in certain formats for FloydHub Parser to Parse
         and generates figures, See https://docs.floydhub.com/guides/jobs/metrics_dict/ for more
         information"""

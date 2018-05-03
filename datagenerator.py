@@ -46,6 +46,8 @@ class ImageDataGenerator(object):
         """
         self.txt_file = txt_file
         self.num_classes = num_classes
+        self.BUFFER_SIZE = buffer_size
+        self.BATCH_SIZE = batch_size
 
         # retrieve the data from the text file
         self._read_txt_file()
@@ -60,7 +62,7 @@ class ImageDataGenerator(object):
         self.labels = convert_to_tensor(self.labels, dtype=dtypes.int32)
 
         # create dataset
-        data = Dataset.from_tensor_slices((self.img_paths, self.labels))
+        data = Dataset.from_tensor_slices((self.img_paths, self.labels))  # type: Dataset
 
         # distinguish between train/infer. when calling the parsing functions
         if mode == 'training':
@@ -77,6 +79,9 @@ class ImageDataGenerator(object):
         # shuffle the first `buffer_size` elements of the dataset
         if shuffle:
             data = data.shuffle(buffer_size=buffer_size)
+
+        # TODO consider whether the following .repeat() method is necessary
+        data = data.repeat()
 
         # create a new dataset with batches of images
         data = data.batch(batch_size)
@@ -139,3 +144,7 @@ class ImageDataGenerator(object):
         img_bgr = img_centered[:, :, ::-1]
 
         return img_bgr, one_hot
+
+    def reshuffle_data(self):
+        self.data = self.data.shuffle(buffer_size=self.BUFFER_SIZE)  # type: Dataset
+        self.data = self.data.batch(self.BATCH_SIZE)  # type: Dataset
