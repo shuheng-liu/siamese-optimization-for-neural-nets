@@ -4,7 +4,7 @@ import sys
 class Metrics:
     def __init__(self, beta=0.9):
         self.metrics_dict = {}
-        self.beta = 0.9
+        self.beta = beta
 
     def update_metric(self, metric, value):
         if value is None:
