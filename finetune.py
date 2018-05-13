@@ -32,6 +32,8 @@ from metrics import Metrics
 Configuration Part.
 """
 
+np.set_printoptions(threshold=np.inf)
+
 
 # generate a txt file containing image paths and labels
 def make_list(folders, flags=None, ceils=None, mode='train', store_path='/output'):
@@ -121,7 +123,9 @@ parser.add_argument('--pretrained', type=str, default='/', help='path for pre-tr
 parser.add_argument('--noCheck', action='store_true', help='don\'t save model checkpoints')
 parser.add_argument('--siamese', type=str, default='dropout6', help='siamese projection layers, default=dropout6')
 parser.add_argument('--checkStd', type=str, default='xent', help='Standard for checkpointing, acc or xent')
-parser.add_argument('--margin', type=float, default=5.0, help='distance margin for calculating siamese loss')
+parser.add_argument('--margin00', type=float, default=8.0, help='distance margin for neg-neg pair, default=10.0')
+parser.add_argument('--margin11', type=float, default=10.0, help='distance margin for pos-pos pair, default=8.0')
+parser.add_argument('--margin01', type=float, default=4.0, help='distance margin for neg-pos pair, default=7.0')
 opt = parser.parse_args()
 print(opt)
 
@@ -184,7 +188,7 @@ batch_size2 = opt.batchSize2 if opt.batchSize2 else auto_adapt_batch(train_lengt
 
 
 # print the info about training, validation and testing sets
-def print_info(batch_size, trainBatches, valBatches, testBatches, model='AlexNet'):
+def print_info(batch_size, train_batches, va_batches, test_batches, model='AlexNet'):
     assert model in ['SiameseAlexNet', 'AlexNet']
 
     print("********** In model %s **********" % model)
@@ -193,14 +197,14 @@ def print_info(batch_size, trainBatches, valBatches, testBatches, model='AlexNet
     print('Train-Val ratio == %.1f%s : %.1f%s' % (100 * train_length / (train_length + val_length), '%',
                                                   100 * val_length / (train_length + val_length), '%'))
     print('Batch Size =', batch_size)
-    print('Of all %d val samples, %d is utilized, percentage = %.1f%s' % (val_length, valBatches * batch_size,
-                                                                          valBatches * batch_size / val_length
+    print('Of all %d val samples, %d is utilized, percentage = %.1f%s' % (val_length, va_batches * batch_size,
+                                                                          va_batches * batch_size / val_length
                                                                           * 100, '%'))
-    print('Of all %d train samples, %d is utilized, percentage = %.1f%s' % (train_length, trainBatches * batch_size,
-                                                                            trainBatches * batch_size / train_length
+    print('Of all %d train samples, %d is utilized, percentage = %.1f%s' % (train_length, train_batches * batch_size,
+                                                                            train_batches * batch_size / train_length
                                                                             * 100, '%'))
-    print('Of all %d test samples, %d is utilized, percentage = %.1f%s' % (test_length, testBatches * batch_size,
-                                                                           testBatches * batch_size / test_length
+    print('Of all %d test samples, %d is utilized, percentage = %.1f%s' % (test_length, test_batches * batch_size,
+                                                                           test_batches * batch_size / test_length
                                                                            * 100, '%'))
 
 
@@ -236,10 +240,16 @@ with tf.device('/cpu:0'):
                                        train_data.data.output_shapes)
     next_batch = iterator.get_next()
 print('data loaded and preprocessed on the cpu')
+
+
 # Ops for initializing the two different iterators
-training_init_op = iterator.make_initializer(train_data.data)
-validation_init_op = iterator.make_initializer(val_data.data)
-testing_init_op = iterator.make_initializer(test_data.data)
+def init_op(iterator, some_data: ImageDataGenerator):
+    return iterator.make_initializer(some_data.data)
+
+
+training_init_op = init_op(iterator, train_data)
+validation_init_op = init_op(iterator, val_data)
+testing_init_op = init_op(iterator, test_data)
 
 # TF placeholder for graph input and output
 # y = tf.placeholder(tf.float32, [None, num_classes])
@@ -268,8 +278,9 @@ print_info(batch_size2, sTrainBatches * 2, sValBatches * 2, sTestBatches * 2, mo
 # create 2 placeholders for the AlexNets nested in Siamese Net
 x1 = tf.placeholder(tf.float32, [None, 227, 227, 3], name='x1')
 x2 = tf.placeholder(tf.float32, [None, 227, 227, 3], name='x2')
+# Construct the Siamese Model
 sNet = SiameseAlexNet(x1, x2, keep_prob, num_classes, sTrainLayers, weights_path=opt.pretrained,
-                      margin=opt.margin, proj=opt.siamese)  # Construct the Siamese Model
+                      margin00=opt.margin00, margin01=opt.margin01, margin11=opt.margin11, proj=opt.siamese)
 y1, y2 = sNet.net1.y, sNet.net2.y  # get the label placeholders of the Siamese Net
 sVars = [v for v in tf.trainable_variables() if v.name.split('/')[-2] in sTrainLayers]
 sLoss = sNet.loss  # get loss tensor of the Siamese Net
@@ -300,7 +311,8 @@ with tf.Session() as sess:
     checkpointer = Checkpointer("Siamese Loss(Val)", sNet, ckpt_path, higher_is_better=False, sess=sess)
 
     # bach sizes are divided by half in siamese training
-    # TODO deal with NaN in siamese training
+    # dealt with NaN in siamese training
+    # TODO debug: Val-Loss is way larger than Train-Loss, possibly due to different dropout rate in train and val
     for epoch in range(sEpochs):
         print("------- Siamese Epoch number: {} ------- ".format(epoch + 1))
 
@@ -310,11 +322,28 @@ with tf.Session() as sess:
             try:
                 img_batch1, label_batch1 = sess.run(next_batch)
                 img_batch2, label_batch2 = sess.run(next_batch)
-                s, _ = sess.run([sLoss_summ, sTrainOp], feed_dict={x1: img_batch1,
-                                                                   x2: img_batch2,
-                                                                   y1: label_batch1,
-                                                                   y2: label_batch2,
-                                                                   keep_prob: 1. - dropout_rate})
+                # TODO re-enable sTrainOp
+                sess.run([sTrainOp], feed_dict={x1: img_batch1,
+                                                x2: img_batch2,
+                                                y1: label_batch1,
+                                                y2: label_batch2,
+                                                keep_prob: 1.})
+                s, _loss = sess.run([sLoss_summ, sLoss], feed_dict={x1: img_batch1,
+                                                                    x2: img_batch2,
+                                                                    y1: label_batch1,
+                                                                    y2: label_batch2,
+                                                                    keep_prob: 1.})
+                print("step: %d, loss = %f" % (step, _loss))
+                count00, count11, count01, loss00, loss11, loss01 = \
+                    sess.run([sNet.count00, sNet.count11, sNet.count01, sNet.loss00, sNet.loss11, sNet.loss01],
+                             feed_dict={x1: img_batch1,
+                                        x2: img_batch2,
+                                        y1: label_batch1,
+                                        y2: label_batch2,
+                                        keep_prob: 1.})
+                print('neg-neg-count =', count00, 'mean-neg-neg-loss =', loss00)
+                print('pos-pos-count =', count11, 'mean-pos-pos-loss =', loss11)
+                print('neg-pos-count =', count01, 'mean-neg-pos-loss =', loss01)
                 if (epoch * sTrainBatches + step) % display_step == 0:
                     train_writer.add_summary(s)
             except OutOfRangeError as e:
@@ -330,11 +359,22 @@ with tf.Session() as sess:
             try:
                 img_batch1, label_batch1 = sess.run(next_batch)
                 img_batch2, label_batch2 = sess.run(next_batch)
+                count00, count11, count01, loss00, loss11, loss01 = \
+                    sess.run([sNet.count00, sNet.count11, sNet.count01, sNet.loss00, sNet.loss11, sNet.loss01],
+                             feed_dict={x1: img_batch1,
+                                        x2: img_batch2,
+                                        y1: label_batch1,
+                                        y2: label_batch2,
+                                        keep_prob: 1.})
+                print('neg-neg-count =', count00, 'mean-neg-neg-loss =', loss00)
+                print('pos-pos-count =', count11, 'mean-pos-pos-loss =', loss11)
+                print('neg-pos-count =', count01, 'mean-neg-pos-loss =', loss01)
                 s, step_loss = sess.run([sLoss_summ, sLoss], feed_dict={x1: img_batch1,
                                                                         x2: img_batch2,
                                                                         y1: label_batch1,
                                                                         y2: label_batch2,
                                                                         keep_prob: 1.})
+                print("step: %d, loss = %f" % (step, step_loss))
                 val_loss += step_loss
                 val_writer.add_summary(s)
             except OutOfRangeError as e:
@@ -373,7 +413,7 @@ with tf.name_scope("classification-train"):
     print('AlexNet Variables are:', aVars)
 
     aOptimizer = tf.train.GradientDescentOptimizer(aLR)
-    aTrainOP = aOptimizer.apply_gradients(grads_and_vars=aGradients)
+    aTrainOp = aOptimizer.apply_gradients(grads_and_vars=aGradients)
 for gradient, var in aGradients:
     tf.summary.histogram(var.name + "/gradients-AlexNet", gradient)
 for var in aVars:
@@ -402,10 +442,14 @@ with tf.Session() as sess:
         sess.run(training_init_op)
         for step in range(aTrainBatches):
             img_batch, label_batch = sess.run(next_batch)
-            s, _ = sess.run([alexnet_summ, aTrainOP], feed_dict={x: img_batch,
-                                                                 y: label_batch,
-                                                                 keep_prob: 1 - dropout_rate})
+            sess.run(aTrainOp, feed_dict={x: img_batch, y: label_batch, keep_prob: 1. - dropout_rate})
+            TP, TN, FP, FN = sess.run([aNet.TP, aNet.TN, aNet.FP, aNet.FN], feed_dict={x: img_batch,
+                                                                                       y: label_batch,
+                                                                                       keep_prob: 1. - dropout_rate})
+            print("TP = %d, TN = %d, FP = %d, FN = %d" % (TP, TN, FP, FN))
             if (epoch * aTrainBatches + step) % display_step == 0:
+                print("TP = %d, TN = %d, FP = %d, FN = %d" % (TP, TN, FP, FN))
+                s = sess.run(alexnet_summ, feed_dict={x: img_batch, y: label_batch, keep_prob: 1 - dropout_rate})
                 train_writer.add_summary(s)
 
         print("start validation, %d batches in total" % aValBatches)
@@ -413,6 +457,10 @@ with tf.Session() as sess:
         val_loss, val_acc, val_precision, val_recall, val_F_alpha = 0., 0., 0., 0., 0.
         for step in range(aValBatches):
             img_batch, label_batch = sess.run(next_batch)
+            TP, TN, FP, FN = sess.run([aNet.TP, aNet.TN, aNet.FP, aNet.FN], feed_dict={x: img_batch,
+                                                                                       y: label_batch,
+                                                                                       keep_prob: 1.})
+            print("TP = %d, TN = %d, FP = %d, FN = %d" % (TP, TN, FP, FN))
             s, step_loss, step_acc, step_precision, step_recall, step_F_alpha = sess.run(
                 [alexnet_summ, aLoss, accuracy, precision, recall, F_alpha],
                 feed_dict={x: img_batch, y: label_batch, keep_prob: 1.}
@@ -434,6 +482,9 @@ with tf.Session() as sess:
 
         # do checkpointing
         checkpointer.update_best(val_loss, checkpoint=(not opt.noCheck))
+
+        # re-shuffle data to observe model behaviour
+        train_data.reshuffle_data()
 
 # # Initialize model
 # if opt.siamese:
