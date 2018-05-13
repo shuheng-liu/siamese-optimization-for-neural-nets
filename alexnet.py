@@ -211,10 +211,12 @@ class AlexNet(Model):
 class SiameseAlexNet(Model):
     # TODO ATTENTION: loading pretrained weights is called outside the constructor
     def __init__(self, x1, x2, keep_prob, num_classes, train_layers, name_scope="Siamese", proj="flattened",
-                 falpha=2.0, margin=5.0, weights_path='/pretrained/bvlc_alexnet.npy'):
+                 falpha=2.0, margin00=3.5, margin01=7.0, margin11=8.0, weights_path='/pretrained/bvlc_alexnet.npy'):
         super(SiameseAlexNet, self).__init__()
         self.name_scope = name_scope
-        self.margin = margin
+        self.margin00 = margin00
+        self.margin01 = margin01
+        self.margin11 = margin11
         self.proj = proj
         with tf.variable_scope(self.name_scope) as scope:
             self.net1 = AlexNet(x1, keep_prob, num_classes, train_layers, falpha=falpha, weights_path=weights_path)
@@ -225,23 +227,31 @@ class SiameseAlexNet(Model):
 
     def _create_loss(self, proj):
         proj1, proj2 = self._get_projections(proj)
-        eucd2 = tf.reduce_sum((proj1 - proj2) ** 2, axis=1, name="euclidean_dist_squared")
+        eucd2 = tf.reduce_mean((proj1 - proj2) ** 2, axis=1, name="euclidean_dist_squared")
         eucd = tf.sqrt(eucd2, name="euclidean_dist")
+        print('euclidean distances tensor', eucd)
         # y1, y2 and y_cmp should be wrapped instead of being a class member
-        y1 = tf.argmax(self.net1.y, axis=1, name='siam-y1')
-        y2 = tf.argmax(self.net2.y, axis=1, name='siam-y2')
+        y1 = tf.cast(tf.argmax(self.net1.y, axis=1), tf.float32, name='siam-y1')
+        y2 = tf.cast(tf.argmax(self.net2.y, axis=1), tf.float32, name='siam-y2')
         self.y1_label, self.y2_label = y1, y2
         y_diff = tf.cast(y1 - y2, tf.bool, name="comparison_label_in_tf.bool")
         y_diff = tf.cast(y_diff, tf.float32, name="comparison_label_in_tf.float32")
-        self.diff_count = tf.reduce_sum(y_diff, name='diff_count')
-        self.same_count = tf.reduce_sum(tf.cast(y1 == y2, tf.int32), name='same_count')
-        self.same_count = tf.reduce_sum(tf.cast(tf.equal(y1, y2), tf.float32))
-        margin = tf.constant(self.margin, name="margin")
+        self.count01 = tf.reduce_sum(y_diff, name='count01')
+        self.count00 = tf.reduce_sum((1 - y1) * (1 - y2), name='count00')
+        self.count11 = tf.reduce_sum(y1 * y2, name='count11')
+
         # if label1 and label2 are the same, y_diff = 0, punish the part where eucd exceeds margin
-        loss_same = tf.reduce_mean(tf.multiply(1 - y_diff, tf.nn.relu(eucd - margin)) ** 2, axis=0, name='loss_same')
+        loss00 = tf.reduce_mean(((1 - y1) * (1 - y2) * tf.nn.relu(eucd - self.margin00)) ** 2, axis=0, name='loss00')
+        loss11 = tf.reduce_mean((y1 * y2 * tf.nn.relu(eucd - self.margin11)) ** 2, axis=0, name='loss11')
+        self.mean_dist00 = tf.reduce_sum((1 - y1) * (1 - y2) * eucd) / self.count00
+        self.mean_dist11 = tf.reduce_sum(y1 * y2 * eucd) / self.count11
+
         # if label1 and label2 are different, y_diff = 1, punish the part where eucd falls short of margin
-        loss_diff = tf.reduce_mean(tf.multiply(y_diff, tf.nn.relu(margin - eucd)) ** 2, axis=0, name='loss_diff')
-        self.loss = tf.add(loss_same, loss_diff, name="siamese-loss")
+        loss01 = tf.reduce_mean((y_diff * tf.nn.relu(self.margin01 - eucd)) ** 2, axis=0, name='loss01')
+        self.mean_dist01 = tf.reduce_sum(y_diff * eucd) / self.count01
+
+        self.loss00, self.loss01, self.loss11 = loss00, loss01, loss11
+        self.loss = tf.add(loss00 + loss11, loss01, name="siamese-loss")
         print(self.loss)
 
     def _get_projections(self, proj):
@@ -396,14 +406,14 @@ def dropout(x, keep_prob, name='dropout'):
 
 if __name__ == "__main__":
     # TODO how does the two nets in Siamese Net share the keep_prob placeholder?
-    keep_prob = tf.placeholder(tf.float32, [], name = 'keep_prob')
+    keep_prob = tf.placeholder(tf.float32, [], name='keep_prob')
     x = tf.placeholder(tf.float32, [None, 227, 227, 3], name='x')
-    # x1 = tf.placeholder(tf.float32, [None, 227, 227, 3], name='x1')
-    # x2 = tf.placeholder(tf.float32, [None, 227, 227, 3], name='x2')
+    x1 = tf.placeholder(tf.float32, [None, 227, 227, 3], name='x1')
+    x2 = tf.placeholder(tf.float32, [None, 227, 227, 3], name='x2')
     # image_batch = np.random.rand(5, 227, 227, 3)
     # label_batch = np.random.rand(5, 1000)
-    net = AlexNet(x, keep_prob, 3, ['fc6', 'fc7'])
-    # net = SiameseAlexNet(x1, x2, 0.5, 3, ['fc6', 'fc7', 'fc8'], name_scope="SiameseA", proj="flattened")
+    # net = AlexNet(x, keep_prob, 3, ['fc6', 'fc7'])
+    net = SiameseAlexNet(x1, x2, 0.5, 3, ['fc6', 'fc7', 'fc8'], name_scope="SiameseA", proj="flattened")
     # netB = SiameseAlexNet(x1, x2, 0.5, 3, ['fc6', 'fc7', 'fc8'], name_scope="SiameseB")
     # check_path = "/Users/liushuheng/Desktop/vars.npy"
     with tf.Session() as sess:
