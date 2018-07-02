@@ -39,7 +39,8 @@ class Checkpointer:
         self.save_path = save_path
         self.higher_is_better = higher_is_better
         self.session = None
-        self._mem_caches = list()
+        # REVIEW initiate self._mem_caches with the default set of values
+        self._mem_caches = [MemCache(model.get_model_vars(sess), -1, -1e10 if higher_is_better else 1e10)]
         self._mem_size = mem_size
         self.heaper = heapq.nlargest if higher_is_better else heapq.nsmallest
         if sess is not None:
