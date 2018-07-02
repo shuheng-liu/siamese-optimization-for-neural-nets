@@ -23,27 +23,35 @@ folder as this file:
 
 import numpy as np
 import tensorflow as tf
+from abc import abstractmethod
 
 
 class Model(object):
+    @abstractmethod
     def __init__(self):
         pass
 
+    @abstractmethod
     def set_model_vars(self, variable_dict, session):
         pass
 
+    @abstractmethod
     def get_model_vars(self, session, init=False):
         return {}
 
+    @abstractmethod
     def load_model_vars(self, path: str, session):
         pass
 
+    @abstractmethod
     def save_model_vars(self, path: str, session, init=False):
         pass
 
+    @abstractmethod
     def load_model_pretrained(self, session):
         pass
 
+    @abstractmethod
     def _create_loss(self, *args):
         pass
 
@@ -54,7 +62,7 @@ class AlexNet(Model):
     TRAIN_LAYERS = ...  # type: set
     y = ...  # type: tf.placeholder
 
-    # TODO ATTENTION: loading pretrained weights is called outside the constructor
+    # ATTENTION: loading pretrained weights is called outside the constructor
     def __init__(self, x, keep_prob, num_classes, train_layers, falpha=2.0,
                  weights_path='/pretrained/bvlc_alexnet.npy'):
         """Create the graph of the AlexNet model.
@@ -209,14 +217,17 @@ class AlexNet(Model):
 
 
 class SiameseAlexNet(Model):
-    # TODO ATTENTION: loading pretrained weights is called outside the constructor
     def __init__(self, x1, x2, keep_prob, num_classes, train_layers, name_scope="Siamese", proj="flattened",
-                 falpha=2.0, margin00=3.5, margin01=7.0, margin11=8.0, weights_path='/pretrained/bvlc_alexnet.npy'):
+                 falpha=2.0, margin00=3.5, margin01=7.0, margin11=8.0, weights_path='/pretrained/bvlc_alexnet.npy',
+                 punish00=1.0, punish11=1.0, punish01=5.0):
         super(SiameseAlexNet, self).__init__()
         self.name_scope = name_scope
         self.margin00 = margin00
         self.margin01 = margin01
         self.margin11 = margin11
+        self.punish00 = punish00
+        self.punish11 = punish11
+        self.punish01 = punish01
         self.proj = proj
         with tf.variable_scope(self.name_scope) as scope:
             self.net1 = AlexNet(x1, keep_prob, num_classes, train_layers, falpha=falpha, weights_path=weights_path)
@@ -226,6 +237,7 @@ class SiameseAlexNet(Model):
             self._create_loss(proj)
 
     def _create_loss(self, proj):
+        # XXX punishing the Pos-Neg loss harder than Pos-Pos loss and Neg-Neg loss to avoid underfitting
         proj1, proj2 = self._get_projections(proj)
         eucd2 = tf.reduce_mean((proj1 - proj2) ** 2, axis=1, name="euclidean_dist_squared")
         eucd = tf.sqrt(eucd2, name="euclidean_dist")
@@ -250,8 +262,10 @@ class SiameseAlexNet(Model):
         loss01 = tf.reduce_mean((y_diff * tf.nn.relu(self.margin01 - eucd)) ** 2, axis=0, name='loss01')
         self.mean_dist01 = tf.reduce_sum(y_diff * eucd) / self.count01
 
-        self.loss00, self.loss01, self.loss11 = loss00, loss01, loss11
-        self.loss = tf.add(loss00 + loss11, loss01, name="siamese-loss")
+        self.loss00 = loss00 * self.punish00
+        self.loss01 = loss01 * self.punish01
+        self.loss11 = loss11 * self.punish11
+        self.loss = tf.add(self.loss00 + self.loss11, self.loss01, name="siamese-loss")
         print(self.loss)
 
     def _get_projections(self, proj):
@@ -273,6 +287,7 @@ class SiameseAlexNet(Model):
             else:
                 raise ValueError("Illegal Projection: " + proj)
         except ValueError as e:
+            print("ValueError: encountered in _get_predictions")
             print(e)
         finally:
             print("projections of %s are " % self.name_scope, projections[0].name, projections[1].name)
@@ -405,7 +420,8 @@ def dropout(x, keep_prob, name='dropout'):
 
 
 if __name__ == "__main__":
-    # TODO how does the two nets in Siamese Net share the keep_prob placeholder?
+    # how the two nets in Siamese Net share the keep_prob placeholder?
+    # the keep_prob argument passed to constructor is an integer, instead of a placeholder
     keep_prob = tf.placeholder(tf.float32, [], name='keep_prob')
     x = tf.placeholder(tf.float32, [None, 227, 227, 3], name='x')
     x1 = tf.placeholder(tf.float32, [None, 227, 227, 3], name='x1')
