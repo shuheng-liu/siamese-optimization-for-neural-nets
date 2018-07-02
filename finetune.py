@@ -88,7 +88,7 @@ def auto_adapt_batch(train_size, val_size, batch_count_multiple=1, max_size=256)
     print('Auto adapting batch size...')
     numerator = min(train_size, val_size)
     denominator = 0
-    while (True):
+    while True:
         denominator += batch_count_multiple
         batch_size = numerator // denominator
         if batch_size <= max_size: return batch_size
@@ -98,35 +98,43 @@ def auto_adapt_batch(train_size, val_size, batch_count_multiple=1, max_size=256)
 sMetrics = Metrics(beta=0.)
 aMetrics = Metrics(beta=0.)
 
-parser = argparse.ArgumentParser()
-parser.add_argument('--train0', required=True, help='paths to negative training dataset, separated by space')
-parser.add_argument('--train1', required=True, help='paths to positive training dataset, separated by space')
-parser.add_argument('--train2', default='', help='paths to other disease training dataset, separated by space')
-parser.add_argument('--trainCeils', default=None, help='Ceils of Training')
-parser.add_argument('--val0', required=True, help='paths to negative validation dataset, separated by space')
-parser.add_argument('--val1', required=True, help='paths to positive validation dataset, separated by space')
-parser.add_argument('--val2', default='', help='paths to other disease validation dataset, separated by space')
-parser.add_argument('--valCeils', default=None, help='Ceils of validation')
-parser.add_argument('--lr1', type=float, default=1e-3, help='learning rate for supervised learning, default=1e-3')
-parser.add_argument('--lr2', type=float, default=5e-7, help='learning rate for siamese learning, default=5e-7')
-parser.add_argument('--nepochs1', type=int, default=100, help='number of supervised epochs, default = 100')
-parser.add_argument('--nepochs2', type=int, default=100, help='number of siamese epochs, default = 100')
-parser.add_argument('--batchSize1', type=int, default=0, help='default = automatic-adapting')
-parser.add_argument('--batchSize2', type=int, default=0, help='default = automatic-adapting')
-parser.add_argument('--dropout', type=int, default=0.5, help='dropout rate for alexnet, default = 0.5')
-parser.add_argument('--nclasses', type=int, default=2, help='number of classes, default = 2')
-parser.add_argument('--trainLayers1', type=str, default='fc7 fc8', help='default = fc7 fc8')
-parser.add_argument('--trainLayers2', type=str, default='fc6', help='default = fc6')
-parser.add_argument('--displayStep', type=int, default=20, help='How often to write tf.summary')
-parser.add_argument('--outf', type=str, default='/output', help='path for checkpoints & tf.summary & samplelist')
-parser.add_argument('--pretrained', type=str, default='/', help='path for pre-trained weights *.npy')
-parser.add_argument('--noCheck', action='store_true', help='don\'t save model checkpoints')
-parser.add_argument('--siamese', type=str, default='dropout6', help='siamese projection layers, default=dropout6')
-parser.add_argument('--checkStd', type=str, default='xent', help='Standard for checkpointing, acc or xent')
-parser.add_argument('--margin00', type=float, default=8.0, help='distance margin for neg-neg pair, default=10.0')
-parser.add_argument('--margin11', type=float, default=10.0, help='distance margin for pos-pos pair, default=8.0')
-parser.add_argument('--margin01', type=float, default=4.0, help='distance margin for neg-pos pair, default=7.0')
-opt = parser.parse_args()
+
+def get_environemnt_parameters():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--train0', required=True, help='paths to negative training dataset, separated by space')
+    parser.add_argument('--train1', required=True, help='paths to positive training dataset, separated by space')
+    parser.add_argument('--train2', default='', help='paths to other disease training dataset, separated by space')
+    parser.add_argument('--trainCeils', default=None, help='Ceils of Training')
+    parser.add_argument('--val0', required=True, help='paths to negative validation dataset, separated by space')
+    parser.add_argument('--val1', required=True, help='paths to positive validation dataset, separated by space')
+    parser.add_argument('--val2', default='', help='paths to other disease validation dataset, separated by space')
+    parser.add_argument('--valCeils', default=None, help='Ceils of validation')
+    parser.add_argument('--lr1', type=float, default=1e-3, help='learning rate for supervised learning, default=1e-3')
+    parser.add_argument('--lr2', type=float, default=5e-7, help='learning rate for siamese learning, default=5e-7')
+    parser.add_argument('--nepochs1', type=int, default=100, help='number of supervised epochs, default = 100')
+    parser.add_argument('--nepochs2', type=int, default=100, help='number of siamese epochs, default = 100')
+    parser.add_argument('--batchSize1', type=int, default=0, help='default = automatic-adapting')
+    parser.add_argument('--batchSize2', type=int, default=0, help='default = automatic-adapting')
+    parser.add_argument('--dropout', type=int, default=0.5, help='dropout rate for alexnet, default = 0.5')
+    parser.add_argument('--nclasses', type=int, default=2, help='number of classes, default = 2')
+    parser.add_argument('--trainLayers1', type=str, default='fc7 fc8', help='default = fc7 fc8')
+    parser.add_argument('--trainLayers2', type=str, default='fc6', help='default = fc6')
+    parser.add_argument('--displayStep', type=int, default=20, help='How often to write tf.summary')
+    parser.add_argument('--outf', type=str, default='/output', help='path for checkpoints & tf.summary & samplelist')
+    parser.add_argument('--pretrained', type=str, default='/', help='path for pre-trained weights *.npy')
+    parser.add_argument('--noCheck', action='store_true', help='don\'t save model checkpoints')
+    parser.add_argument('--siamese', type=str, default='dropout6', help='siamese projection layers, default=dropout6')
+    parser.add_argument('--checkStd', type=str, default='xent', help='Standard for checkpointing, acc or xent')
+    parser.add_argument('--margin00', type=float, default=8.0, help='distance margin for neg-neg pair, default=10.0')
+    parser.add_argument('--margin11', type=float, default=6.0, help='distance margin for pos-pos pair, default=8.0')
+    parser.add_argument('--margin01', type=float, default=7.07, help='distance margin for neg-pos pair, default=7.0')
+    # parser.add_argument('--margin00', type=float, default=8.0, help='distance margin for neg-neg pair, default=10.0')
+    # parser.add_argument('--margin11', type=float, default=10.0, help='distance margin for pos-pos pair, default=8.0')
+    # parser.add_argument('--margin01', type=float, default=4.0, help='distance margin for neg-pos pair, default=7.0')
+    return parser.parse_args()
+
+
+opt = get_environemnt_parameters()
 print(opt)
 
 # Learning params
@@ -243,13 +251,13 @@ print('data loaded and preprocessed on the cpu')
 
 
 # Ops for initializing the two different iterators
-def init_op(iterator, some_data: ImageDataGenerator):
+def get_init_op(iterator, some_data: ImageDataGenerator):
     return iterator.make_initializer(some_data.data)
 
 
-training_init_op = init_op(iterator, train_data)
-validation_init_op = init_op(iterator, val_data)
-testing_init_op = init_op(iterator, test_data)
+training_init_op = get_init_op(iterator, train_data)
+validation_init_op = get_init_op(iterator, val_data)
+testing_init_op = get_init_op(iterator, test_data)
 
 # TF placeholder for graph input and output
 # y = tf.placeholder(tf.float32, [None, num_classes])
@@ -388,12 +396,18 @@ with tf.Session() as sess:
         sMetrics.write_metrics()
 
         # do checkpointing
-        checkpointer.update_best(val_loss, checkpoint=(not opt.noCheck))
+        checkpointer.update_best(val_loss, checkpoint=(not opt.noCheck), mem_cache=True, epoch=epoch)
 
         # re-shuffle the training set to generate new pairs for siamese training
         train_data.reshuffle_data()
 
+    # after training, save the parameters corresponding to the lowest losses
+    mem_caches = checkpointer.list_memory_caches()
+
 # get and prepare the AlexNet of that Siamese Net
+# UNDONE set the parameters to `mem_size` sets of parameters with lowest losses, currently using only the first one
+sNet.set_model_vars(mem_caches[0].get_parameters(), checkpointer.session)
+
 x = tf.placeholder(tf.float32, [None, 227, 227, 3], name="x")  # get the input placeholder
 with tf.Session() as sess:  # double-checked that train_layers are what they are supposed to be
     sess.run(tf.global_variables_initializer())
@@ -443,12 +457,12 @@ with tf.Session() as sess:
         for step in range(aTrainBatches):
             img_batch, label_batch = sess.run(next_batch)
             sess.run(aTrainOp, feed_dict={x: img_batch, y: label_batch, keep_prob: 1. - dropout_rate})
-            TP, TN, FP, FN = sess.run([aNet.TP, aNet.TN, aNet.FP, aNet.FN], feed_dict={x: img_batch,
-                                                                                       y: label_batch,
-                                                                                       keep_prob: 1. - dropout_rate})
-            print("TP = %d, TN = %d, FP = %d, FN = %d" % (TP, TN, FP, FN))
+            # TP, TN, FP, FN = sess.run([aNet.TP, aNet.TN, aNet.FP, aNet.FN], feed_dict={x: img_batch,
+            #                                                                            y: label_batch,
+            #                                                                            keep_prob: 1. - dropout_rate})
+            # print("TP = %d, TN = %d, FP = %d, FN = %d" % (TP, TN, FP, FN))
             if (epoch * aTrainBatches + step) % display_step == 0:
-                print("TP = %d, TN = %d, FP = %d, FN = %d" % (TP, TN, FP, FN))
+                # print("TP = %d, TN = %d, FP = %d, FN = %d" % (TP, TN, FP, FN))
                 s = sess.run(alexnet_summ, feed_dict={x: img_batch, y: label_batch, keep_prob: 1 - dropout_rate})
                 train_writer.add_summary(s)
 
