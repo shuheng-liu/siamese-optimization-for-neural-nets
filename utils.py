@@ -129,7 +129,7 @@ def get_environment_parameters():
     parser.add_argument('--nclasses', type=int, default=2, help='number of classes, default = 2')
     parser.add_argument('--trainLayers1', type=str, default='fc7 fc8', help='default = fc7 fc8')
     parser.add_argument('--trainLayers2', type=str, default='fc6', help='default = fc6')
-    parser.add_argument('--displayStep', type=int, default=20, help='How often to write tf.summary')
+    parser.add_argument('--displayStep', type=int, default=200, help='How often to write tf.summary')
     parser.add_argument('--outf', type=str, default='/output', help='path for checkpoints & tf.summary & samplelist')
     parser.add_argument('--pretrained', type=str, default='/', help='path for pre-trained weights *.npy')
     parser.add_argument('--noCheck', action='store_true', help='don\'t save model checkpoints')
