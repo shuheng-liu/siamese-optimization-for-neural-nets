@@ -428,13 +428,13 @@ if __name__ == "__main__":
     x2 = tf.placeholder(tf.float32, [None, 227, 227, 3], name='x2')
     # image_batch = np.random.rand(5, 227, 227, 3)
     # label_batch = np.random.rand(5, 1000)
-    # net = AlexNet(x, keep_prob, 3, ['fc6', 'fc7'])
-    net = SiameseAlexNet(x1, x2, 0.5, 3, ['fc6', 'fc7', 'fc8'], name_scope="SiameseA", proj="flattened")
+    net = AlexNet(x, keep_prob, 2, ['fc6', 'fc7'])
+    # net = SiameseAlexNet(x1, x2, 0.5, 3, ['fc6', 'fc7', 'fc8'], name_scope="SiameseA", proj="flattened")
     # netB = SiameseAlexNet(x1, x2, 0.5, 3, ['fc6', 'fc7', 'fc8'], name_scope="SiameseB")
     # check_path = "/Users/liushuheng/Desktop/vars.npy"
-    with tf.Session() as sess:
-        sess.run(tf.global_variables_initializer())
-        net.load_model_pretrained(sess)
+    # with tf.Session() as sess:
+    #     sess.run(tf.global_variables_initializer())
+    #     net.load_model_pretrained(sess)
     # y1 = sess.run(netA.net1.y, feed_dict={netA.net1.X: image_batch, netA.net1.y: label_batch})
     # y2 = sess.run(netB.net1.y, feed_dict={netB.net1.X: image_batch, netB.net1.y: label_batch})
     # netA.save_model_vars(check_path, sess)
