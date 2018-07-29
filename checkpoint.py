@@ -39,10 +39,10 @@ class Checkpointer:
         self.save_path = save_path
         self.higher_is_better = higher_is_better
         self.session = None
-        # REVIEW initiate self._mem_caches with the default set of values
+        # initiate self._mem_caches with the default set of values
         self._mem_caches = [MemCache(model.get_model_vars(sess), -1, -1e10 if higher_is_better else 1e10)]
         self._mem_size = mem_size
-        self.heaper = heapq.nlargest if higher_is_better else heapq.nsmallest
+        self.heaper_func = heapq.nlargest if higher_is_better else heapq.nsmallest
         if sess is not None:
             self.update_session(sess)
 
@@ -55,27 +55,26 @@ class Checkpointer:
             print("Ignoring non-MemCache instance", mem_cache)
             return
         self._mem_caches.append(mem_cache)
-        self._mem_caches = self.heaper(self._mem_size, self._mem_caches, key=lambda cache: cache.get_metric())
+        self._mem_caches = self.heaper_func(self._mem_size, self._mem_caches, key=lambda cache: cache.get_metric())
 
     def list_memory_caches(self):
         return self._mem_caches
 
     def update_best(self, value, epoch=0, checkpoint=True, mem_cache=False):
-        if self._better_than_best(value):
+        if self._better_than_current_best(value):
             self._update_new_best(value, checkpoint=checkpoint)
         else:
             self._retain_current_best()
 
-        if not mem_cache: return
+        if mem_cache:
+            try:
+                parameters = self.model.get_model_vars(self.session)
+                self.add_memory_cache(MemCache(parameters, epoch, value))
+            except AttributeError as e:
+                print(e)
+                print("Default: not updating memory cache")
 
-        try:
-            parameters = self.model.get_model_vars(self.session)
-            self.add_memory_cache(MemCache(parameters, epoch, value))
-        except AttributeError as e:
-            print(e)
-            print("Default: not updating memory cache")
-
-    def _better_than_best(self, value) -> bool:
+    def _better_than_current_best(self, value) -> bool:
         # implement a reader-friendly xor function
         if self.higher_is_better:
             return value > self.best
