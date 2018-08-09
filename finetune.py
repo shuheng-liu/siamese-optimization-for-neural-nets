@@ -24,7 +24,7 @@ from tensorflow.python.framework.errors_impl import OutOfRangeError
 
 from alexnet import AlexNet, SiameseAlexNet
 from datagenerator import ImageDataGenerator
-from checkpoint import Checkpointer
+from checkpoint import Checkpointer, MemCache
 from metrics import Metrics
 from utils import auto_adapt_batch, determine_list, print_info, get_environment_parameters, get_init_op
 
@@ -72,7 +72,7 @@ train_file, train_length, val_file, val_length, test_file, test_length = determi
 batch_size1 = opt.batchSize1 if opt.batchSize1 else auto_adapt_batch(train_length, val_length)
 batch_size2 = opt.batchSize2 if opt.batchSize2 else auto_adapt_batch(train_length, val_length) // 2
 
-# TODO overall debugging
+# TODO overall debugging, paying special attention to the instantiation of tf.Session
 """
 Main Part of the finetuning Script.
 """
@@ -185,7 +185,6 @@ with tf.Session() as sess:
             try:
                 img_batch1, label_batch1 = sess.run(next_batch)
                 img_batch2, label_batch2 = sess.run(next_batch)
-                # TODO re-enable sTrainOp
                 sess.run([sTrainOp], feed_dict={x1: img_batch1,
                                                 x2: img_batch2,
                                                 y1: label_batch1,
@@ -239,7 +238,8 @@ with tf.Session() as sess:
                                                                         keep_prob: 1.})
                 print("step: %d, loss = %f" % (step, step_loss))
                 val_loss += step_loss
-                val_writer.add_summary(s)
+                if (epoch * sValBatches + step) % display_step == 0:
+                    val_writer.add_summary(s)
             except OutOfRangeError as e:
                 print(e)
                 print('ignoring residue batches in step %d' % step)
@@ -260,9 +260,9 @@ with tf.Session() as sess:
     mem_caches = checkpointer.list_memory_caches()
 
 # get and prepare the AlexNet of that Siamese Net
-# UNDONE set the parameters to `mem_size` sets of parameters with lowest losses, currently using only the first one
-with tf.Session() as sess:
-    sNet.set_model_vars(mem_caches[0].get_parameters(), sess)
+# set the parameters to `mem_size` sets of parameters with lowest losses, currently using only the first one
+# with tf.Session() as sess:
+#     sNet.set_model_vars(mem_caches[0].get_parameters(), sess)
 
 x = tf.placeholder(tf.float32, [None, 227, 227, 3], name="x")  # get the input placeholder
 with tf.Session() as sess:  # double-checked that train_layers are what they are supposed to be
@@ -296,62 +296,74 @@ recall_summ = tf.summary.scalar('recall', recall)
 F_alpha_summ = tf.summary.scalar('F_alpha', F_alpha)
 alexnet_summ = tf.summary.merge([aLoss_summ, accuracy_summ, precision_summ, recall_summ, F_alpha_summ])
 
+
 # Classification Training for n2 epochs
-with tf.Session() as sess:
-    sess.run(tf.global_variables_initializer())
-    train_writer.add_graph(sess.graph)
-    # since the aNet is obtained from sNet, pre-trained weights does not need to be loaded
+def alexnet_training(aNet, param_set_id):
+    global sess, ckpt_path, checkpointer, epoch, step, s, val_loss, step_loss
+    with tf.Session() as sess:
+        sess.run(tf.global_variables_initializer())
+        train_writer.add_graph(sess.graph)
+        # since the aNet is obtained from sNet, pre-trained weights does not need to be loaded
 
-    ckpt_path = os.path.join(checkpoint_path, "alex.npy")
-    checkpointer = Checkpointer(opt.checkStd, aNet, ckpt_path, higher_is_better=(opt.checkStd == "acc"), sess=sess)
+        ckpt_path = os.path.join(checkpoint_path, "alex.npy")
+        checkpointer = Checkpointer(opt.checkStd, aNet, ckpt_path, higher_is_better=(opt.checkStd == "acc"), sess=sess)
 
-    for epoch in range(aEpochs):
-        print("------- AlexNet Epoch number: {} ------- ".format(epoch + 1))
+        for epoch in range(aEpochs):
+            print("------- Parameter Set: {}, AlexNet Epoch number: {} ------- ".format(param_set_id, epoch + 1))
 
-        print("start training, %d batches in total" % aTrainBatches)
-        sess.run(training_init_op)
-        for step in range(aTrainBatches):
-            img_batch, label_batch = sess.run(next_batch)
-            sess.run(aTrainOp, feed_dict={x: img_batch, y: label_batch, keep_prob: 1. - dropout_rate})
-            # TP, TN, FP, FN = sess.run([aNet.TP, aNet.TN, aNet.FP, aNet.FN], feed_dict={x: img_batch,
-            #                                                                            y: label_batch,
-            #                                                                            keep_prob: 1. - dropout_rate})
-            # print("TP = %d, TN = %d, FP = %d, FN = %d" % (TP, TN, FP, FN))
-            if (epoch * aTrainBatches + step) % display_step == 0:
+            print("start training, %d batches in total" % aTrainBatches)
+            sess.run(training_init_op)
+            for step in range(aTrainBatches):
+                img_batch, label_batch = sess.run(next_batch)
+                sess.run(aTrainOp, feed_dict={x: img_batch, y: label_batch, keep_prob: 1. - dropout_rate})
+                # TP, TN, FP, FN = sess.run([aNet.TP, aNet.TN, aNet.FP, aNet.FN],
+                #                           feed_dict={x: img_batch, y: label_batch, keep_prob: 1. - dropout_rate})
                 # print("TP = %d, TN = %d, FP = %d, FN = %d" % (TP, TN, FP, FN))
-                s = sess.run(alexnet_summ, feed_dict={x: img_batch, y: label_batch, keep_prob: 1 - dropout_rate})
-                train_writer.add_summary(s)
+                if (epoch * aTrainBatches + step) % display_step == 0:
+                    # print("TP = %d, TN = %d, FP = %d, FN = %d" % (TP, TN, FP, FN))
+                    s = sess.run(alexnet_summ, feed_dict={x: img_batch, y: label_batch, keep_prob: 1 - dropout_rate})
+                    train_writer.add_summary(s)
 
-        print("start validation, %d batches in total" % aValBatches)
-        sess.run(validation_init_op)
-        val_loss, val_acc, val_precision, val_recall, val_F_alpha = 0., 0., 0., 0., 0.
-        for step in range(aValBatches):
-            img_batch, label_batch = sess.run(next_batch)
-            TP, TN, FP, FN = sess.run([aNet.TP, aNet.TN, aNet.FP, aNet.FN], feed_dict={x: img_batch,
-                                                                                       y: label_batch,
-                                                                                       keep_prob: 1.})
-            print("TP = %d, TN = %d, FP = %d, FN = %d" % (TP, TN, FP, FN))
-            s, step_loss, step_acc, step_precision, step_recall, step_F_alpha = sess.run(
-                [alexnet_summ, aLoss, accuracy, precision, recall, F_alpha],
-                feed_dict={x: img_batch, y: label_batch, keep_prob: 1.}
-            )
-            val_loss += step_loss
-            val_acc += step_acc
-            val_precision += step_precision
-            val_recall += step_recall
-            val_F_alpha += step_F_alpha
-            val_writer.add_summary(s)
-        val_loss /= aValBatches
-        val_acc /= aValBatches
-        val_precision /= aValBatches
-        val_recall /= aValBatches
-        val_F_alpha /= aValBatches
-        metric_names = ['val_loss', 'val_acc', 'val_precision', 'val_recall', 'val_F_alpha']
-        aMetrics.update_metrics(metric_names, [val_loss, val_acc, val_precision, val_recall, val_F_alpha])
-        aMetrics.write_metrics()
+            print("start validation, %d batches in total" % aValBatches)
+            sess.run(validation_init_op)
+            val_loss, val_acc, val_precision, val_recall, val_F_alpha = 0., 0., 0., 0., 0.
+            for step in range(aValBatches):
+                img_batch, label_batch = sess.run(next_batch)
+                TP, TN, FP, FN = sess.run([aNet.TP, aNet.TN, aNet.FP, aNet.FN], feed_dict={x: img_batch,
+                                                                                           y: label_batch,
+                                                                                           keep_prob: 1.})
+                print("TP = %d, TN = %d, FP = %d, FN = %d" % (TP, TN, FP, FN))
+                s, step_loss, step_acc, step_precision, step_recall, step_F_alpha = sess.run(
+                    [alexnet_summ, aLoss, accuracy, precision, recall, F_alpha],
+                    feed_dict={x: img_batch, y: label_batch, keep_prob: 1.}
+                )
+                print("precision = {}, recall = {}, F_alpha = {}".format(step_precision, step_recall, step_F_alpha))
+                val_loss += step_loss
+                val_acc += step_acc
+                val_precision += step_precision
+                val_recall += step_recall
+                val_F_alpha += step_F_alpha
+                if (epoch * aValBatches + step) % display_step == 0:
+                    val_writer.add_summary(s)
+            val_loss /= aValBatches
+            val_acc /= aValBatches
+            val_precision /= aValBatches
+            val_recall /= aValBatches
+            val_F_alpha /= aValBatches
+            metric_names = ['val_loss', 'val_acc', 'val_precision', 'val_recall', 'val_F_alpha']
+            aMetrics.update_metrics(metric_names, [val_loss, val_acc, val_precision, val_recall, val_F_alpha])
+            aMetrics.write_metrics()
 
-        # do checkpointing
-        checkpointer.update_best(val_loss, checkpoint=(not opt.noCheck))
+            # do checkpointing
+            checkpointer.update_best(val_loss, checkpoint=(not opt.noCheck))
 
-        # re-shuffle data to observe model behaviour
-        train_data.reshuffle_data()
+            # re-shuffle data to observe model behaviour
+            train_data.reshuffle_data()
+
+
+for index, mem_cache in enumerate(mem_caches):  # type: int, MemCache
+    print("+" * 15, "proceeding with parameters set No. %d" % (index + 1), "+" * 15)
+    with tf.Session() as sess:
+        aNet.set_model_vars(mem_cache.get_parameters(), sess)
+
+    alexnet_training(aNet, index)
