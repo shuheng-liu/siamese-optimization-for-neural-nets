@@ -26,7 +26,13 @@ from alexnet import AlexNet, SiameseAlexNet
 from datagenerator import ImageDataGenerator
 from checkpoint import Checkpointer, MemCache
 from metrics import Metrics
-from utils import auto_adapt_batch, determine_list, print_info, get_environment_parameters, get_init_op
+from utils import \
+    auto_adapt_batch, \
+    determine_list, \
+    print_info, \
+    get_environment_parameters, \
+    get_init_op, \
+    get_precision_recall_fscore
 
 """
 Configuration Part.
@@ -327,30 +333,28 @@ def alexnet_training(aNet, param_set_id):
 
         print("start validation, %d batches in total" % aValBatches)
         sess.run(validation_init_op)
+        # calculate precision, recall and F_score only once in each epoch
         val_loss, val_acc, val_precision, val_recall, val_F_alpha = 0., 0., 0., 0., 0.
+        val_TP, val_TN, val_FP, val_FN = 0, 0, 0, 0
         for step in range(aValBatches):
             img_batch, label_batch = sess.run(next_batch)
-            TP, TN, FP, FN = sess.run([aNet.TP, aNet.TN, aNet.FP, aNet.FN], feed_dict={x: img_batch,
-                                                                                       y: label_batch,
-                                                                                       keep_prob: 1.})
-            print("TP = %d, TN = %d, FP = %d, FN = %d" % (TP, TN, FP, FN))
-            s, step_loss, step_acc, step_precision, step_recall, step_F_alpha = sess.run(
-                [alexnet_summ, aLoss, accuracy, precision, recall, F_alpha],
-                feed_dict={x: img_batch, y: label_batch, keep_prob: 1.}
-            )
-            print("precision = {}, recall = {}, F_alpha = {}".format(step_precision, step_recall, step_F_alpha))
+            step_TP, step_TN, step_FP, step_FN = sess.run([aNet.TP, aNet.TN, aNet.FP, aNet.FN],
+                                                          feed_dict={x: img_batch, y: label_batch, keep_prob: 1.})
+
+            s, step_loss, step_acc = sess.run([alexnet_summ, aLoss, accuracy],
+                                              feed_dict={x: img_batch, y: label_batch, keep_prob: 1.})
             val_loss += step_loss
             val_acc += step_acc
-            val_precision += step_precision
-            val_recall += step_recall
-            val_F_alpha += step_F_alpha
+            val_TP += step_TP
+            val_TN += step_TN
+            val_FP += step_FP
+            val_FN += step_FN
             if (epoch * aValBatches + step) % display_step == 0:
                 val_writer.add_summary(s)
+        print("TP = %d, TN = %d, FP = %d, FN = %d" % (val_TP, val_TN, val_FP, val_FN))
         val_loss /= aValBatches
         val_acc /= aValBatches
-        val_precision /= aValBatches
-        val_recall /= aValBatches
-        val_F_alpha /= aValBatches
+        val_precision, val_recall, val_F_alpha = get_precision_recall_fscore(val_TP, val_TN, val_FP, val_FN, 1.0)
         metric_names = ['val_loss', 'val_acc', 'val_precision', 'val_recall', 'val_F_alpha']
         aMetrics.update_metrics(metric_names, [val_loss, val_acc, val_precision, val_recall, val_F_alpha])
         aMetrics.write_metrics()

@@ -146,3 +146,32 @@ def get_environment_parameters():
 
 def get_init_op(iterator, some_data: ImageDataGenerator):
     return iterator.make_initializer(some_data.data)
+
+
+def get_precision_recall_fscore(TP=0, TN=0, FP=0, FN=0, alpha=1.0):
+    # convert to int instead of np.int32
+    TP, TN, FP, FN = int(TP), int(TN), int(FP), int(FN)
+
+    # get precision
+    try:
+        precision = TP / (TP + FP)
+    except ZeroDivisionError:
+        print('ZeroDivisionError in calculating precision')
+        precision = 0
+
+    # get recall
+    try:
+        recall = TP / (TP + FN)
+    except ZeroDivisionError:
+        print('ZeroDivisionError in calculating recall')
+        recall = 0
+
+    # get F score
+    alpha_squared = alpha ** 2  # calculate alpha^2 in advance
+    try:
+        fscore = (1 + alpha_squared) * TP / ((1 + alpha_squared) * TP + alpha_squared * FN + FP)
+    except ZeroDivisionError:
+        print('ZeroDivisionError in calculating F score')
+        fscore = 0
+
+    return precision, recall, fscore
