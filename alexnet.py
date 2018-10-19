@@ -171,10 +171,8 @@ class AlexNet(Model):
                         except:
                             print("Failed to assign value to", var.name)
 
-    # TODO debug _create_loss, precision and F_score is somehow always NaN, maybe due to wrong choice of axis in argmax
     def _create_stats(self, alpha):
         """only works for binary classification"""
-        # only works for binary classification
         prediction = tf.argmax(self.fc8, axis=1, name='alexnet-prediction')
         ground_truth = tf.argmax(self.y, axis=1, name='alexnet-ground-truth')
         self.prediction, self.ground_truth = prediction, ground_truth
@@ -189,7 +187,9 @@ class AlexNet(Model):
             print("Warning: precision, recall and F_alpha score does not apply to Multi-Label Classification")
 
     def get_model_vars(self, session, init=False):
-        if init: session.run(tf.global_variables_initializer())
+        """returns a dict of variables in the model, with keys being layer names and values being list of np.arrays"""
+        if init:
+            session.run(tf.global_variables_initializer())
         layers = ['conv1', 'conv2', 'conv3', 'conv4', 'conv5', 'fc6', 'fc7', 'fc8']
         variable_dict = {layer: [] for layer in layers}
         for layer in variable_dict:
@@ -200,6 +200,7 @@ class AlexNet(Model):
         return variable_dict
 
     def set_model_vars(self, variable_dict, session):
+        """assign model variables with values from a dict passed"""
         for op_name in variable_dict:
             with tf.variable_scope(op_name, reuse=True):
                 for data in variable_dict[op_name]:
@@ -209,9 +210,11 @@ class AlexNet(Model):
                     session.run(var.assign(data))
 
     def save_model_vars(self, path: str, session, init=False):
+        """save model var-value dict under passed path"""
         np.save(path, self.get_model_vars(session, init=init))
 
     def load_model_vars(self, path: str, session):
+        """load model var-value from passed path"""
         variable_dict = np.load(path, encoding="bytes").item()  # type: dict
         self.set_model_vars(variable_dict, session)
 
@@ -242,7 +245,7 @@ class SiameseAlexNet(Model):
         eucd2 = tf.reduce_mean((proj1 - proj2) ** 2, axis=1, name="euclidean_dist_squared")
         eucd = tf.sqrt(eucd2, name="euclidean_dist")
         print('euclidean distances tensor', eucd)
-        # y1, y2 and y_cmp should be wrapped instead of being a class member
+        # y1, y2 and y_cmp should be a class member
         y1 = tf.cast(tf.argmax(self.net1.y, axis=1), tf.float32, name='siam-y1')
         y2 = tf.cast(tf.argmax(self.net2.y, axis=1), tf.float32, name='siam-y2')
         self.y1_label, self.y2_label = y1, y2
@@ -299,20 +302,24 @@ class SiameseAlexNet(Model):
             self.net1.load_model_pretrained(session)
 
     def load_model_vars(self, path: str, session):
+        """load model var-value from passed path"""
         with tf.variable_scope(self.name_scope, reuse=True):
             self.net1.load_model_vars(path, session)
 
     def save_model_vars(self, path: str, session, init=False):
+        """save model var-value dict under passed path"""
         with tf.variable_scope(self.name_scope):
             self.net1.save_model_vars(path, session, init=init)
 
     def get_model_vars(self, session, init=False):
+        """returns a dict of variables in the model, with keys being layer names and values being list of np.arrays"""
         with tf.variable_scope(self.name_scope):
             return self.net1.get_model_vars(session, init=init)
 
     def set_model_vars(self, variable_dict, session):
+        """assign model variables with values from a dict passed"""
         with tf.variable_scope(self.name_scope):
-            return self.net1.set_model_vars(variable_dict, session)
+            self.net1.set_model_vars(variable_dict, session)
 
     # return a new instance of AlexNet with trainable variables
     def get_net_copy(self, session, x=None, keep_prob=None, num_classes=None, train_layers=None, falpha=None,
@@ -417,6 +424,22 @@ def lrn(x, radius, alpha, beta, name, bias=1.0):
 def dropout(x, keep_prob, name='dropout'):
     """Create a dropout layer."""
     return tf.nn.dropout(x, keep_prob, name=name)
+
+
+def test1():
+    keep_prob = tf.placeholder(tf.float32, [], name='keep_prob')
+    x = tf.placeholder(tf.float32, [None, 227, 227, 3], name='x')
+    x1 = tf.placeholder(tf.float32, [None, 227, 227, 3], name='x1')
+    x2 = tf.placeholder(tf.float32, [None, 227, 227, 3], name='x2')
+    num_classes = 2
+    sTrainLayers = ['fc6']
+    aTrainLayers = ['fc7', 'fc8']
+    sNet = SiameseAlexNet(x1, x2, keep_prob, num_classes, sTrainLayers)
+    sess = tf.InteractiveSession()
+    # sNet.load_model_pretrained(session=sess)
+    print(sNet.net1.conv1)
+
+    aNet = sNet.get_net_copy()
 
 
 if __name__ == "__main__":
