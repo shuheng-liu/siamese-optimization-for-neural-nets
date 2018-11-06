@@ -119,7 +119,7 @@ def get_environment_parameters():
     parser.add_argument('--val1', required=True, help='paths to positive validation dataset, separated by space')
     parser.add_argument('--val2', default='', help='paths to other disease validation dataset, separated by space')
     parser.add_argument('--valCeils', default=None, help='Ceils of validation')
-    parser.add_argument('--lr1', type=float, default=1e-3, help='learning rate for supervised learning, default=1e-3')
+    parser.add_argument('--lr1', type=float, default=3e-4, help='learning rate for supervised learning, default=1e-3')
     parser.add_argument('--lr2', type=float, default=5e-7, help='learning rate for siamese learning, default=5e-7')
     parser.add_argument('--nepochs1', type=int, default=100, help='number of supervised epochs, default = 100')
     parser.add_argument('--nepochs2', type=int, default=100, help='number of siamese epochs, default = 100')
