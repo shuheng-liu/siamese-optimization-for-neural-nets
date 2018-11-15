@@ -18,8 +18,12 @@ from datetime import datetime
 
 import numpy as np
 import tensorflow as tf
-from tensorflow.contrib.data import Iterator
-from tensorflow.contrib.tensorboard.plugins import projector
+try:
+    from tensorflow.contrib.data import Iterator
+except ImportError as e:
+    print(e)
+    print("importing Iterator from tf.data instead")
+    Iterator = tf.data.Iterator
 from tensorflow.python.framework.errors_impl import OutOfRangeError
 
 from alexnet import AlexNet, SiameseAlexNet

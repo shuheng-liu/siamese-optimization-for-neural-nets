@@ -6,7 +6,12 @@
 
 import numpy as np
 import tensorflow as tf
-from tensorflow.contrib.data import Dataset
+try:
+    from tensorflow.contrib.data import Dataset
+except ImportError as e:
+    print(e)
+    print("importing Dataset from tf.data")
+    Dataset = tf.data.Dataset
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework.ops import convert_to_tensor
 
