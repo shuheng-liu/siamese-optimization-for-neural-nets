@@ -1,4 +1,4 @@
-![](https://zenodo.org/badge/DOI/10.5281/zenodo.1037359.svg)
+<!-- ![](https://zenodo.org/badge/DOI/10.5281/zenodo.1037359.svg) -->
 
 # Finetune AlexNet with Tensorflow
 
