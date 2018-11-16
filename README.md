@@ -16,7 +16,9 @@ When the nerual net is too deep, overfitting and gradient vanishment becomes a m
 With *Optimization Objective Breakdown*, we improve upon the gradient model by splitting the network into two parts, separated by a *latent layer*.
 We define a pair-wise loss function on representations in the *latent layer*--our choice is the Siamese Loss.
 - All layers prior to the *latent layer* is trained with the objective of minimizing Siamese Loss on the *latent layer*.
+    * In this phase, training model does not require prediction information. The latter part of the model is not used.
 - All layers pursuant to the *latent layer* is trained with the objective of minimizing cross-entropy on the *prediction layer*.
+    * In this phase, only the second part of the model is trained. (The first part of the model is fixed).
 ## Mathematical Intuition
 
 This repository contains all the code needed to finetune [AlexNet](http://papers.nips.cc/paper/4824-imagenet-classification-with-deep-convolutional-neural-networks.pdf) on any arbitrary dataset. Beside the comments in the code itself, I also wrote an article which you can fine [here](https://kratzert.github.io/2017/02/24/finetuning-alexnet-with-tensorflow.html) with further explanation.
