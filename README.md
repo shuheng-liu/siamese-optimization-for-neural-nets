@@ -24,6 +24,13 @@ We define a pair-wise loss function on representations in the *latent layer*--ou
 In our paper, *Classification of Citrus Canker on Small Datasets*, we mathematically proved that this techinique can result in **linear separability** of representations on the *latent layer*, if the model is sufficiently trained.
 This intuition entails that the second part of the model only needs to draw a hyperplane for classification, a trivial task for any neural networks.
 
+
+
+# Version Info
+The code is refactored for compatibility with latest version of Tensorflow.
+You can find an explanation of the new input pipeline in a new [blog post](https://kratzert.github.io/2017/06/15/example-of-tensorflows-new-input-pipeline.html) 
+You can use this code as before for finetuning AlexNet on your own dataset without OpenCV. 
+
 This repository contains all the code needed to finetune [AlexNet](http://papers.nips.cc/paper/4824-imagenet-classification-with-deep-convolutional-neural-networks.pdf) on any arbitrary dataset. Beside the comments in the code itself, I also wrote an article which you can fine [here](https://kratzert.github.io/2017/02/24/finetuning-alexnet-with-tensorflow.html) with further explanation.
 
 All you need are the pretrained weights, which you can find [here](http://www.cs.toronto.edu/~guerzhoy/tf_alexnet/) or convert yourself from the caffe library using [caffe-to-tensorflow](https://github.com/ethereon/caffe-tensorflow).
