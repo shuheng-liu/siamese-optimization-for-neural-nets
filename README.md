@@ -12,6 +12,11 @@ The techinque is referred to as *Optimization Objective Breakdown*, as it breaks
 Traditional methods of tuning a neural network relies heavily (and often solely) on gradients w.r.t. loss function $\nabla_{\theta}l(y, \hat{y})$, where the loss function $l(\cdot, \cdot)$ is typically a cross-entropy.
 When the nerual net is too deep, overfitting and gradient vanishment becomes a major problem, especially if input samples are rare or different labels share a similar distribution.
 
+### Optmization Object Breakdown
+With *Optimization Objective Breakdown*, we improve upon the gradient model by splitting the network into two parts, separated by a *latent layer*.
+We define a pair-wise loss function on representations in the *latent layer*--our choice is the Siamese Loss.
+- All layers prior to the *latent layer* is trained with the objective of minimizing Siamese Loss on the *latent layer*.
+- All layers pursuant to the *latent layer* is trained with the objective of minimizing cross-entropy on the *prediction layer*.
 ## Mathematical Intuition
 
 This repository contains all the code needed to finetune [AlexNet](http://papers.nips.cc/paper/4824-imagenet-classification-with-deep-convolutional-neural-networks.pdf) on any arbitrary dataset. Beside the comments in the code itself, I also wrote an article which you can fine [here](https://kratzert.github.io/2017/02/24/finetuning-alexnet-with-tensorflow.html) with further explanation.
