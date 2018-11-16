@@ -8,6 +8,9 @@ The techinque is referred to as *Optimization Objective Breakdown*, as it breaks
 ## How to Improve upon Gradient-Based Methods
 ### Illustration of the Proposed Method
 ![a](resources/optimization-objective-breakdown.png)
+### Gradient-Based Methods
+Traditional methods of tuning a neural network relies heavily (and often solely) on gradients w.r.t. loss function $\nabla_{\theta}l(y, \hat{y})$, where the loss function $l(\cdot, \cdot)$ is typically a cross-entropy.
+When the nerual net is too deep, overfitting and gradient vanishment becomes a major problem, especially if input samples are rare or different labels share a similar distribution.
 
 ## Mathematical Intuition
 
